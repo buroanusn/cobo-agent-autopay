@@ -1,0 +1,4 @@
+interface:
+  display_name: "Agent Credits Ledger"
+  short_description: "Credits ledger and auto top-up workflow"
+  default_prompt: "Use $agent-credits-ledger to implement or review agent credit consumption and automatic top-up logic."
