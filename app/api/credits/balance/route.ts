@@ -5,7 +5,7 @@ export const dynamic = "force-dynamic";
 
 export async function GET() {
   try {
-    return okJson(getDashboardSnapshot());
+    return okJson(await getDashboardSnapshot());
   } catch (error) {
     return errorJson(error, 500);
   }

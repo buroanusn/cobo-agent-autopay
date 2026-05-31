@@ -59,6 +59,12 @@ button:disabled {
   opacity: 0.55;
 }
 
+button.compact {
+  min-height: 30px;
+  padding: 0 10px;
+  font-size: 13px;
+}
+
 .page {
   width: min(1180px, calc(100% - 32px));
   margin: 0 auto;
@@ -71,6 +77,14 @@ button:disabled {
   justify-content: space-between;
   gap: 20px;
   margin-bottom: 24px;
+}
+
+.top-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+  flex-wrap: wrap;
 }
 
 .title {
@@ -247,6 +261,10 @@ button:disabled {
 @media (max-width: 860px) {
   .topbar {
     display: grid;
+  }
+
+  .top-actions {
+    justify-content: flex-start;
   }
 
   .span-8,

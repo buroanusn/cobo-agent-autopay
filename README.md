@@ -6,7 +6,7 @@ MVP implementation for an agent that consumes internal credits and automatically
 
 - Next.js dashboard and API routes.
 - Chain-off credits ledger with idempotent top-up orders.
-- CAW gateway boundary with a mock mode for local development and an HTTP adapter for production wiring.
+- CAW gateway boundary with a mock mode for local development and a real Cobo Agentic Wallet SDK adapter.
 - Base USDC configuration and a Solidity `CreditsPayment` contract that emits order-linked purchase events.
 - Default policy: 5 USDC per transaction, 20 USDC per day, 100 USDC per month, 7-day validity.
 
@@ -34,6 +34,29 @@ The default `CAW_MODE=mock` flow lets you:
 3. Run an agent task that consumes credits.
 4. Auto top up with mock Base USDC when the balance drops under the threshold.
 
+## Database Setup
+
+The local setup uses Postgres through Prisma by default. The durable schema is
+defined in `prisma/schema.prisma`; use `STORAGE_DRIVER=prisma` after migrations
+are applied.
+
+```bash
+cp .env.example .env
+npm run db:generate
+npm run db:migrate
+```
+
+Set `DATABASE_URL` to a Postgres database before running migrations.
+
+Use `STORAGE_DRIVER=memory` only for a throwaway local mock demo.
+
+## Testnet Mode
+
+The project defaults to `CHAIN_ENV=base-sepolia` so demos can use Base Sepolia
+ETH and test USDC instead of real funds. Switch to `CHAIN_ENV=base-mainnet`
+only after CAW credentials, contract deployment, treasury setup, and production
+spend controls are confirmed.
+
 ## Production Wiring
 
 Keep business code behind `lib/caw/gateway.ts`. The app expects CAW to enforce the wallet-side spending policy and the backend to enforce product-side limits before every payment.
@@ -43,8 +66,12 @@ See [Next Implementation Questions](docs/next-implementation-questions.md) for t
 For a real deployment:
 
 - Replace `CAW_MODE=mock` with `CAW_MODE=http`.
-- Set `CAW_API_BASE_URL`, `CAW_API_KEY`, and CAW route paths to the approved CAW environment.
-- Deploy `contracts/CreditsPayment.sol` on Base.
+- Set Cobo Agentic Wallet SDK credentials: `AGENT_WALLET_API_URL`,
+  `AGENT_WALLET_API_KEY`, and `AGENT_WALLET_WALLET_ID`.
+- Keep `CHAIN_ENV=base-sepolia` and `CAW_CHAIN_ID=BASE_SEPOLIA` for testnet demos.
+- Use `CAW_FAUCET_TOKEN_ID` for CAW Faucet requests. Confirm the exact token id from
+  CAW metadata if your test environment uses a different name.
+- Deploy `contracts/CreditsPayment.sol` on Base Sepolia for testnet demos.
 - Configure `PAYMENT_CONTRACT_ADDRESS` and `TREASURY_ADDRESS`.
 - Replace the in-memory store with a durable database.
 - Subscribe to `CreditsPurchased` events and call `POST /api/webhooks/chain/credits-payment`.

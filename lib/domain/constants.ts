@@ -9,6 +9,21 @@ export const BASE_CHAIN = {
   explorerBaseUrl: "https://basescan.org"
 } as const;
 
+export const BASE_SEPOLIA_CHAIN = {
+  id: 84532,
+  name: "Base Sepolia",
+  usdcAddress: "0x036CbD53842c5426634e7929541eC2318f3dCF7e",
+  explorerBaseUrl: "https://sepolia.basescan.org"
+} as const;
+
+export function getConfiguredChain() {
+  return process.env.CHAIN_ENV === "base-mainnet" ? BASE_CHAIN : BASE_SEPOLIA_CHAIN;
+}
+
+export function getConfiguredCawChainId() {
+  return process.env.CAW_CHAIN_ID || (process.env.CHAIN_ENV === "base-mainnet" ? "BASE_ETH" : "BASE_SEPOLIA");
+}
+
 export const USDC_DECIMALS = 6;
 export const USDC_MINOR_UNITS = 10 ** USDC_DECIMALS;
 export const CREDITS_PER_USDC = 1000;
@@ -24,4 +39,10 @@ export const DEFAULT_SPEND_POLICY = {
   dailyLimitUsdcMinor: 20 * USDC_MINOR_UNITS,
   monthlyLimitUsdcMinor: 100 * USDC_MINOR_UNITS,
   validDays: 7
+} as const;
+
+export const DEFAULT_GUARDRAILS = {
+  reviewThresholdUsdcMinor: 2 * USDC_MINOR_UNITS,
+  rolling24hTxCountLimit: 10,
+  rolling24hAmountUsdcMinor: 20 * USDC_MINOR_UNITS
 } as const;

@@ -18,7 +18,7 @@ export async function POST(request: Request) {
       throw new Error("amountUsdcMinor is required.");
     }
     return okJson(
-      settleCreditsPurchase({
+      await settleCreditsPurchase({
         orderId: body.orderId,
         onchainOrderId: body.onchainOrderId,
         amountUsdcMinor: body.amountUsdcMinor,

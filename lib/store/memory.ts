@@ -1,14 +1,19 @@
 import {
-  BASE_CHAIN,
   CREDITS_PER_USDC,
   DEFAULT_CREDIT_ACCOUNT,
+  DEFAULT_GUARDRAILS,
+  DEFAULT_SPEND_POLICY,
+  DEMO_CAW_WALLET,
   DEMO_USER_EMAIL,
-  DEMO_USER_ID
+  DEMO_USER_ID,
+  getConfiguredCawChainId,
+  getConfiguredChain
 } from "@/lib/domain/constants";
 import type {
   AgentUsageEvent,
   CawAuthorization,
   CreditAccount,
+  CawPairingSession,
   DashboardSnapshot,
   LedgerEntry,
   TopupOrder,
@@ -23,6 +28,7 @@ type AgentDb = {
   topupOrders: Map<string, TopupOrder>;
   usageEvents: AgentUsageEvent[];
   chainEventsSeen: Set<string>;
+  pairingSessions: Map<string, CawPairingSession>;
 };
 
 const globalStore = globalThis as typeof globalThis & {
@@ -69,7 +75,8 @@ function createInitialDb(): AgentDb {
     ],
     topupOrders: new Map(),
     usageEvents: [],
-    chainEventsSeen: new Set()
+    chainEventsSeen: new Set(),
+    pairingSessions: new Map()
   };
 }
 
@@ -103,15 +110,63 @@ export function snapshotForUser(userId: string): DashboardSnapshot {
   const user = requireUser(userId);
   const account = requireCreditAccount(userId);
   const authorization = getActiveAuthorization(userId);
+  const chain = getConfiguredChain();
+  const topupOrders = [...db.topupOrders.values()]
+    .filter((order) => order.userId === userId)
+    .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+  const creditedOrders = topupOrders.filter((order) => order.status === "credited");
+  const now = Date.now();
+  const dayAgo = now - 24 * 60 * 60 * 1000;
+  const monthAgo = now - 30 * 24 * 60 * 60 * 1000;
+  const credited24h = creditedOrders.filter((order) => Date.parse(order.updatedAt) >= dayAgo);
+  const credited30d = creditedOrders.filter((order) => Date.parse(order.updatedAt) >= monthAgo);
 
   return {
     user,
     account,
     authorization,
-    topupOrders: [...db.topupOrders.values()]
-      .filter((order) => order.userId === userId)
-      .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+    pairingSession: db.pairingSessions.get(userId),
+    guardrails: {
+      singleLimitUsdcMinor:
+        authorization?.singleLimitUsdcMinor ?? DEFAULT_SPEND_POLICY.singleLimitUsdcMinor,
+      dailyLimitUsdcMinor:
+        authorization?.dailyLimitUsdcMinor ?? DEFAULT_SPEND_POLICY.dailyLimitUsdcMinor,
+      reviewThresholdUsdcMinor: DEFAULT_GUARDRAILS.reviewThresholdUsdcMinor,
+      allowedAddresses: [user.cawWalletAddress ?? DEMO_CAW_WALLET],
+      allowedChains: [getConfiguredCawChainId()],
+      generatedBy: "system_default",
+      updatedAt: authorization?.createdAt ?? user.createdAt
+    },
+    paymentStats: {
+      spent24hUsdcMinor: credited24h.reduce((total, order) => total + order.amountUsdcMinor, 0),
+      spent30dUsdcMinor: credited30d.reduce((total, order) => total + order.amountUsdcMinor, 0),
+      txCount24h: credited24h.length,
+      txCount30d: credited30d.length,
+      automaticPayments: creditedOrders.filter((order) => order.reason !== "manual").length,
+      manualApprovalPayments: topupOrders.filter((order) => order.status === "pending_approval")
+        .length
+    },
+    pendingApprovals: topupOrders
+      .filter((order) => order.status === "pending_approval")
       .slice(0, 12),
+    pactDetails: authorization
+      ? {
+          reviewIfAmountUsdcMinor: DEFAULT_GUARDRAILS.reviewThresholdUsdcMinor,
+          denyIfAmountUsdcMinor: authorization.singleLimitUsdcMinor,
+          completionTimeElapsedDays: Math.max(
+            0,
+            Math.ceil((Date.parse(authorization.expiresAt) - Date.now()) / (24 * 60 * 60 * 1000))
+          ),
+          completionAmountSpentUsdcMinor: authorization.monthlyLimitUsdcMinor,
+          remainingUsdcMinor: Math.max(
+            0,
+            authorization.monthlyLimitUsdcMinor - authorization.spentMonthUsdcMinor
+          ),
+          txCount24hLimit: DEFAULT_GUARDRAILS.rolling24hTxCountLimit,
+          amount24hLimitUsdcMinor: DEFAULT_GUARDRAILS.rolling24hAmountUsdcMinor
+        }
+      : undefined,
+    topupOrders: topupOrders.slice(0, 12),
     ledgerEntries: db.ledgerEntries
       .filter((entry) => entry.userId === userId)
       .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
@@ -121,9 +176,9 @@ export function snapshotForUser(userId: string): DashboardSnapshot {
       .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
       .slice(0, 12),
     network: {
-      chainId: BASE_CHAIN.id,
-      name: BASE_CHAIN.name,
-      usdcAddress: BASE_CHAIN.usdcAddress
+      chainId: chain.id,
+      name: chain.name,
+      usdcAddress: chain.usdcAddress
     },
     pricing: {
       creditsPerUsdc: CREDITS_PER_USDC

@@ -8,6 +8,8 @@ export type TopupOrderStatus =
   | "pending_policy"
   | "caw_submitted"
   | "chain_pending"
+  | "pending_approval"
+  | "approval_expired"
   | "credited"
   | "failed";
 
@@ -33,6 +35,7 @@ export type CawAuthorization = {
   userId: string;
   walletAddress: string;
   pactId: string;
+  pactApiKey?: string;
   status: CawAuthorizationStatus;
   singleLimitUsdcMinor: number;
   dailyLimitUsdcMinor: number;
@@ -86,10 +89,51 @@ export type AgentUsageEvent = {
   createdAt: string;
 };
 
+export type CawPairingSession = {
+  code: string;
+  status: "generated" | "paired" | "expired";
+  expiresAt: string;
+  createdAt: string;
+};
+
+export type UserGuardrails = {
+  singleLimitUsdcMinor: number;
+  dailyLimitUsdcMinor: number;
+  reviewThresholdUsdcMinor: number;
+  allowedAddresses: string[];
+  allowedChains: string[];
+  generatedBy: "system_default" | "ai_questionnaire" | "ai_direct";
+  updatedAt: string;
+};
+
+export type PaymentStats = {
+  spent24hUsdcMinor: number;
+  spent30dUsdcMinor: number;
+  txCount24h: number;
+  txCount30d: number;
+  automaticPayments: number;
+  manualApprovalPayments: number;
+};
+
+export type PactDetails = {
+  reviewIfAmountUsdcMinor: number;
+  denyIfAmountUsdcMinor: number;
+  completionTimeElapsedDays: number;
+  completionAmountSpentUsdcMinor: number;
+  remainingUsdcMinor: number;
+  txCount24hLimit: number;
+  amount24hLimitUsdcMinor: number;
+};
+
 export type DashboardSnapshot = {
   user: User;
   account: CreditAccount;
   authorization?: CawAuthorization;
+  pairingSession?: CawPairingSession;
+  guardrails: UserGuardrails;
+  paymentStats: PaymentStats;
+  pendingApprovals: TopupOrder[];
+  pactDetails?: PactDetails;
   topupOrders: TopupOrder[];
   ledgerEntries: LedgerEntry[];
   usageEvents: AgentUsageEvent[];
