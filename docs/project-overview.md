@@ -106,6 +106,8 @@ CAW_CHAIN_ID=BASE_SEPOLIA
 CAW_FAUCET_TOKEN_ID=BASE_SEPOLIA_USDC
 PAYMENT_CONTRACT_ADDRESS=...
 TREASURY_ADDRESS=...
+BASE_RPC_URL=...
+DEPLOYER_PRIVATE_KEY=...
 ```
 
 说明：
@@ -114,6 +116,19 @@ TREASURY_ADDRESS=...
 - `CAW_MODE=http`：调用真实 Cobo Agentic Wallet SDK。
 - `PAYMENT_CONTRACT_ADDRESS`：真实支付必须配置，CAW 会调用这个积分购买合约。
 - `CAW_FAUCET_TOKEN_ID`：测试币申请用的 token id，默认是 `BASE_SEPOLIA_USDC`。
+
+部署积分购买合约：
+
+```bash
+npm run contract:compile
+npm run contract:deploy
+```
+
+部署脚本会读取 `.env` 中的 `BASE_RPC_URL`、`DEPLOYER_PRIVATE_KEY`、
+`TREASURY_ADDRESS` 和 `CHAIN_ENV`，然后输出 `PAYMENT_CONTRACT_ADDRESS`。
+
+注意：当前 `CreditsPayment` 合约通过 `USDC.transferFrom` 收款，因此真实
+`buyCredits` 调用前，CAW 钱包必须先给该合约 USDC allowance。
 
 ## 当前完成状态
 
@@ -144,9 +159,10 @@ TREASURY_ADDRESS=...
 2. 部署 `contracts/CreditsPayment.sol` 到 Base Sepolia。
 3. 把合约地址填入 `PAYMENT_CONTRACT_ADDRESS`。
 4. 使用 CAW Faucet 或其他测试水龙头给钱包准备 Base Sepolia ETH 和测试 USDC。
-5. 在 Cobo App 中审批 Pact。
-6. 刷新授权，拿到 Pact API Key。
-7. 执行手动充值或触发低余额自动充值。
+5. 让 CAW 钱包给 `PAYMENT_CONTRACT_ADDRESS` 授权 USDC allowance。
+6. 在 Cobo App 中审批 Pact。
+7. 刷新授权，拿到 Pact API Key。
+8. 执行手动充值或触发低余额自动充值。
 
 ## 安全边界
 

@@ -57,6 +57,31 @@ ETH and test USDC instead of real funds. Switch to `CHAIN_ENV=base-mainnet`
 only after CAW credentials, contract deployment, treasury setup, and production
 spend controls are confirmed.
 
+## Deploy CreditsPayment
+
+Configure deployment variables in `.env`:
+
+```bash
+BASE_RPC_URL=https://...
+DEPLOYER_PRIVATE_KEY=0x...
+TREASURY_ADDRESS=0x...
+CHAIN_ENV=base-sepolia
+```
+
+Deploy the contract:
+
+```bash
+npm run contract:compile
+npm run contract:deploy
+```
+
+The script prints `PAYMENT_CONTRACT_ADDRESS=...`; copy that value into `.env`
+before switching `CAW_MODE=http`.
+
+Important: `CreditsPayment.buyCredits` pulls USDC with `transferFrom`, so the
+CAW wallet must grant USDC allowance to the deployed contract before real
+`buyCredits` calls can succeed.
+
 ## Production Wiring
 
 Keep business code behind `lib/caw/gateway.ts`. The app expects CAW to enforce the wallet-side spending policy and the backend to enforce product-side limits before every payment.
