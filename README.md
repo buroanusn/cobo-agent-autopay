@@ -2,6 +2,8 @@
 
 MVP implementation for an agent that consumes internal credits and automatically buys more credits with a CAW-controlled wallet when the balance is low.
 
+Original GitHub repository README is preserved at `docs/github-readme.md`.
+
 ## What This Implements
 
 - Next.js dashboard and API routes.
