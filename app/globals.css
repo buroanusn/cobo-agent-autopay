@@ -242,6 +242,17 @@ button.compact {
   font-size: 13px;
 }
 
+.x402-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 10px;
+  margin-top: 14px;
+}
+
+.x402-trace {
+  grid-column: span 3;
+}
+
 .notice {
   border: 1px solid #d4e5dd;
   border-radius: var(--radius);
@@ -271,5 +282,13 @@ button.compact {
   .span-6,
   .span-4 {
     grid-column: span 12;
+  }
+
+  .x402-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .x402-trace {
+    grid-column: span 1;
   }
 }

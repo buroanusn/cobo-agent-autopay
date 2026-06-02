@@ -11,7 +11,7 @@ import { creditsToUsdcMinor } from "@/lib/domain/money";
 import type { CawAuthorization } from "@/lib/domain/types";
 import { getCreditRepository } from "@/lib/store";
 
-type AutoTopupReason = "low_balance" | "insufficient_balance" | "manual";
+type AutoTopupReason = "low_balance" | "insufficient_balance" | "manual" | "x402_resource";
 
 export async function getDashboardSnapshot(userId = DEMO_USER_ID) {
   return getCreditRepository().snapshotForUser(userId);
@@ -263,13 +263,27 @@ export async function executeAutoTopup(input: {
   userId?: string;
   reason?: AutoTopupReason;
 }) {
+  return executeCreditsTopup({
+    userId: input.userId,
+    reason: input.reason,
+    skipIfBalanceAboveThreshold: input.reason === undefined || input.reason === "low_balance"
+  });
+}
+
+export async function executeCreditsTopup(input: {
+  userId?: string;
+  reason?: AutoTopupReason;
+  amountUsdcMinor?: number;
+  credits?: number;
+  skipIfBalanceAboveThreshold?: boolean;
+}) {
   const repository = getCreditRepository();
   const userId = input.userId ?? DEMO_USER_ID;
   const reason = input.reason ?? "low_balance";
   const user = await repository.requireUser(userId);
   const account = await repository.requireCreditAccount(userId);
 
-  if (reason === "low_balance" && account.balanceCredits >= account.lowBalanceThresholdCredits) {
+  if (input.skipIfBalanceAboveThreshold && account.balanceCredits >= account.lowBalanceThresholdCredits) {
     return {
       status: "skipped" as const,
       reason: "balance_above_threshold",
@@ -287,7 +301,8 @@ export async function executeAutoTopup(input: {
     };
   }
 
-  const amountUsdcMinor = creditsToUsdcMinor(account.autoTopupCredits);
+  const credits = input.credits ?? account.autoTopupCredits;
+  const amountUsdcMinor = input.amountUsdcMinor ?? creditsToUsdcMinor(credits);
   const policy = await checkAuthorizationPolicy(userId, amountUsdcMinor);
 
   if (!policy.ok) {
@@ -295,7 +310,7 @@ export async function executeAutoTopup(input: {
       userId,
       walletAddress: user.cawWalletAddress ?? DEMO_CAW_WALLET,
       amountUsdcMinor,
-      credits: account.autoTopupCredits,
+      credits,
       reason,
       status: "failed",
       failureReason: policy.reason
@@ -313,7 +328,7 @@ export async function executeAutoTopup(input: {
     userId,
     walletAddress: policy.authorization.walletAddress,
     amountUsdcMinor,
-    credits: account.autoTopupCredits,
+    credits,
     reason,
     status: "pending_policy"
   });
@@ -330,7 +345,7 @@ export async function executeAutoTopup(input: {
     orderId: order.orderId,
     onchainOrderId: order.onchainOrderId,
     amountUsdcMinor,
-    credits: account.autoTopupCredits
+    credits
   });
 
   await recordAuthorizationSpend(policy.authorization, amountUsdcMinor);

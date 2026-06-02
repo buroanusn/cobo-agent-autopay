@@ -143,6 +143,41 @@ npm run contract:deploy
 - Pact 授权创建和刷新 API。
 - 站内积分扣减、自动充值、订单、流水、统计。
 - 链上结算 webhook 的幂等入口。
+- x402 + CAW mock PoC：模拟 HTTP 402 付款要求、CAW mock 支付、付款凭证重试和资源返回。
+
+## x402 与 CAW 的结合方案
+
+Bank of AI 的 x402 Agent 文档可以借鉴，但不能直接照搬。可借鉴的是
+`HTTP 402 Payment Required -> 读取 payment requirements -> 付款 -> 带凭证重试`
+这个协议流程；不能直接照搬的是 Agent 持有私钥的模型，因为本项目的核心是
+CAW/Pact 授权支付，不把用户钱包私钥交给 Agent。
+
+当前 mock PoC 的落地方式：
+
+```text
+Agent 请求付费资源
+  -> 本地 seller 返回 x402 payment requirements
+  -> 后端调用 CAW gateway 执行 1 USDC mock 支付
+  -> 写入 topup_orders、ledger_entries、chain_events_seen
+  -> 生成 mock x402 payment credential
+  -> 重试请求并返回付费资源
+```
+
+验证入口：
+
+```bash
+curl -i http://localhost:3000/api/x402/resource
+curl -s -X POST http://localhost:3000/api/x402/resource -H 'content-type: application/json' -d '{}'
+```
+
+Dashboard 入口：
+
+```text
+http://localhost:3000/dashboard
+```
+
+点击 `运行 x402 付费资源` / `Run x402 Paid Resource`，页面会展示付款凭证、资源内容和流程记录；
+同时充值订单、账本和支付统计会更新，作为真实数据库记录。
 
 已验证：
 
