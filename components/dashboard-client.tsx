@@ -48,6 +48,8 @@ type CawPactPreview = {
   executionPlan: string;
   policies: unknown[];
   completionConditions: unknown[];
+  draftedBy: "agent_llm" | "agent_deterministic";
+  warnings: string[];
   limits: {
     singleLimitUsdcMinor: number;
     dailyLimitUsdcMinor: number;
@@ -122,6 +124,8 @@ const copy = {
     pactValidDays: "有效天数",
     pactPreview: "Pact 预览",
     pactPreviewHint: "先根据用户意图生成 CAW 计划，确认后再提交到 Cobo App 审批。",
+    draftedBy: "起草来源",
+    warnings: "校验提示",
     originalIntent: "用户原始意图",
     executionPlan: "执行计划",
     policies: "权限策略",
@@ -227,6 +231,8 @@ const copy = {
     pactValidDays: "Valid days",
     pactPreview: "Pact Preview",
     pactPreviewHint: "Generate a CAW plan from the user's intent first, then submit it for Cobo App approval.",
+    draftedBy: "Drafted by",
+    warnings: "Validation notes",
     originalIntent: "Original intent",
     executionPlan: "Execution plan",
     policies: "Policies",
@@ -671,6 +677,10 @@ export function DashboardClient({
                 <span>{pactPreview.intent}</span>
               </div>
               <div className="event">
+                <strong>{t.draftedBy}</strong>
+                <span>{pactPreview.draftedBy}</span>
+              </div>
+              <div className="event">
                 <strong>{t.originalIntent}</strong>
                 <span>{pactPreview.originalIntent}</span>
               </div>
@@ -686,6 +696,12 @@ export function DashboardClient({
                 <strong>{t.completionConditions}</strong>
                 <pre>{JSON.stringify(pactPreview.completionConditions, null, 2)}</pre>
               </div>
+              {pactPreview.warnings.length > 0 ? (
+                <div className="event preview-wide">
+                  <strong>{t.warnings}</strong>
+                  <pre>{pactPreview.warnings.join("\n")}</pre>
+                </div>
+              ) : null}
             </div>
           ) : (
             <div className="event">

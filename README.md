@@ -11,6 +11,9 @@ Original GitHub repository README is preserved at `docs/github-readme.md`.
 - CAW gateway boundary with a mock mode for local development and a real Cobo Agentic Wallet SDK adapter.
 - Base USDC configuration and a Solidity `CreditsPayment` contract that emits order-linked purchase events.
 - Default policy: 5 USDC per transaction, 20 USDC per day, 100 USDC per month, 7-day validity.
+- Agent-drafted CAW Pact previews: natural-language intent becomes a PactSpec
+  draft, then backend validation constrains it to the configured chain, USDC
+  token, payment contract, and spend limits before CAW submission.
 
 ## Project Skills
 
@@ -35,6 +38,24 @@ The default `CAW_MODE=mock` flow lets you:
 2. Create an active Pact-style authorization.
 3. Run an agent task that consumes credits.
 4. Auto top up with mock Base USDC when the balance drops under the threshold.
+
+## Pact Drafter
+
+The dashboard's "Generate Pact Plan" button runs a local agent drafter before
+submitting anything to CAW. With no LLM key configured, the app uses a
+deterministic drafter so demos keep working offline. To use an LLM-backed
+drafter, set:
+
+```bash
+OPENAI_API_KEY=...
+PACT_DRAFTER_MODE=llm
+PACT_DRAFTER_MODEL=gpt-4.1-mini
+```
+
+CAW still receives a structured PactSpec through the SDK. The app does not let
+the model directly expand permissions: backend validation rebuilds the final
+policy allowlist from `CHAIN_ENV`, `CAW_CHAIN_ID`, `PAYMENT_CONTRACT_ADDRESS`,
+and the configured USDC address.
 
 ## Database Setup
 

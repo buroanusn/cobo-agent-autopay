@@ -1,4 +1,5 @@
 import { createCawGateway, getCawRuntimeStatus } from "@/lib/caw/gateway";
+import { draftCawPactFromIntent } from "@/lib/caw/pact-drafter";
 import {
   CREDITS_PER_USDC,
   DEFAULT_SPEND_POLICY,
@@ -19,6 +20,8 @@ export type CawPactPreview = {
   executionPlan: string;
   policies: unknown[];
   completionConditions: unknown[];
+  draftedBy: "agent_llm" | "agent_deterministic";
+  warnings: string[];
   limits: {
     singleLimitUsdcMinor: number;
     dailyLimitUsdcMinor: number;
@@ -240,67 +243,28 @@ export async function previewCawAuthorization(input: {
   const userIntent =
     input.intent?.trim() ||
     "Allow this agent to automatically top up my internal credits with Base Sepolia USDC when the balance is low.";
-  const timeElapsedSeconds = Math.max(1, limits.validDays * 24 * 60 * 60);
-  const policies = [
-    {
-      name: "credits-payment-contract-call",
-      type: "contract_call",
-      rules: {
-        effect: "allow",
-        when: {
-          chain_in: [coboChainId],
-          target_in: [
-            { chain_id: coboChainId, contract_addr: contractAddress },
-            { chain_id: coboChainId, contract_addr: chain.usdcAddress }
-          ]
-        },
-        deny_if: {
-          usage_limits: {
-            rolling_24h: {
-              tx_count_gt: 10
-            }
-          }
-        }
-      },
-      priority: 100,
-      is_active: true
+  const draft = await draftCawPactFromIntent({
+    intent: userIntent,
+    context: {
+      walletAddress,
+      chainName: chain.name,
+      cawChainId: coboChainId,
+      usdcAddress: chain.usdcAddress,
+      paymentContractAddress: contractAddress,
+      limits
     }
-  ];
-  const completionConditions = [
-    {
-      type: "time_elapsed",
-      threshold: timeElapsedSeconds.toString()
-    },
-    {
-      type: "amount_spent_usd",
-      threshold: usdcMinorToUsdString(limits.monthlyLimitUsdcMinor)
-    }
-  ];
-  const executionPlan = [
-    "# Summary",
-    userIntent,
-    "# Operations",
-    `- Monitor the user's internal credit balance for ${walletAddress}.`,
-    `- When the balance is low, call ${contractAddress} on ${chain.name} to buy credits with Base Sepolia USDC.`,
-    "- Wait for CAW transaction submission and chain settlement before crediting the account.",
-    "# Risk Controls",
-    `- Allowed chain: ${chain.name} (${coboChainId}).`,
-    `- Allowed targets: CreditsPayment ${contractAddress} and USDC ${chain.usdcAddress}.`,
-    `- Product-side single top-up limit: ${usdcMinorToUsdString(limits.singleLimitUsdcMinor)} USDC.`,
-    `- Product-side daily limit: ${usdcMinorToUsdString(limits.dailyLimitUsdcMinor)} USDC.`,
-    `- Pact ends after ${limits.validDays} days or ${usdcMinorToUsdString(
-      limits.monthlyLimitUsdcMinor
-    )} USD of spend.`
-  ].join("\n\n");
+  });
 
   return {
     preview: {
-      intent: `Agent credits auto top-up on ${chain.name}`,
-      originalIntent: userIntent,
-      executionPlan,
-      policies,
-      completionConditions,
-      limits
+      intent: draft.intent,
+      originalIntent: draft.originalIntent,
+      executionPlan: draft.executionPlan,
+      policies: draft.policies,
+      completionConditions: draft.completionConditions,
+      draftedBy: draft.draftedBy,
+      warnings: draft.warnings,
+      limits: draft.limits
     }
   };
 }
@@ -697,10 +661,6 @@ function refreshAuthorizationWindows(authorization: CawAuthorization) {
 
 function estimateAgentCredits(prompt: string) {
   return Math.min(5000, Math.max(750, Math.ceil(prompt.length * 10) + 650));
-}
-
-function usdcMinorToUsdString(amountUsdcMinor: number) {
-  return (amountUsdcMinor / 1_000_000).toFixed(6).replace(/0+$/, "").replace(/\.$/, "");
 }
 
 function isStalePolicyPendingOrder(order: { status: string; createdAt: string }) {
