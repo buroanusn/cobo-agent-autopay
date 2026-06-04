@@ -128,6 +128,79 @@ button.compact {
   padding: 18px;
 }
 
+.guide-panel {
+  border-color: #cbded5;
+  background:
+    linear-gradient(135deg, rgba(23, 107, 77, 0.08), rgba(37, 89, 168, 0.06)),
+    var(--surface);
+}
+
+.guide-steps {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 10px;
+}
+
+.guide-step {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 12px;
+  background: rgba(255, 255, 255, 0.75);
+}
+
+.guide-step.done {
+  border-color: #bdd8cb;
+  background: #f4faf7;
+}
+
+.guide-index {
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  background: var(--primary);
+  color: white;
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.guide-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.guide-heading span {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.guide-step p {
+  margin: 6px 0 0;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.next-step {
+  display: flex;
+  gap: 8px;
+  margin-top: 14px;
+  border: 1px solid #ead6a4;
+  border-radius: var(--radius);
+  padding: 12px;
+  background: #fff9e8;
+  color: #5c4210;
+  line-height: 1.45;
+}
+
 .span-8 {
   grid-column: span 8;
 }
@@ -378,6 +451,14 @@ button.compact {
   .span-6,
   .span-4 {
     grid-column: span 12;
+  }
+
+  .guide-steps {
+    grid-template-columns: 1fr;
+  }
+
+  .next-step {
+    display: grid;
   }
 
   .status-grid {

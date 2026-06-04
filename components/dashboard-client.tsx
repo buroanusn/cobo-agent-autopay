@@ -390,6 +390,9 @@ export function DashboardClient({
   const guardrails = snapshot.guardrails;
   const stats = snapshot.paymentStats;
   const walletConnected = Boolean(snapshot.user.cawWalletAddress);
+  const missingItems = cawStatus?.missing.map(formatMissingItem) ?? [];
+  const realPactReady = Boolean(cawStatus) && !missingItems.includes("真实 CAW Pact 授权");
+  const nextStep = getNextStep(missingItems);
   const pactBody = buildPactBody({
     intent: pactIntent,
     singleLimitUsdc,
@@ -416,6 +419,49 @@ export function DashboardClient({
       </header>
 
       <section className="grid">
+        <div className="panel span-12 guide-panel">
+          <div className="panel-title">
+            <h2>演示流程总览</h2>
+            <span className={`status ${cawStatus?.readyForRealPayment ? "active" : "blocked"}`}>
+              {cawStatus?.readyForRealPayment ? "真实支付已就绪" : "真实支付未就绪"}
+            </span>
+          </div>
+          <div className="guide-steps">
+            <GuideStep
+              index="1"
+              title="CAW 钱包配对"
+              status={cawStatus?.runtime.walletPaired ? "已完成" : "待完成"}
+              active={Boolean(cawStatus?.runtime.walletPaired)}
+              description="手机 CAW App 已绑定 Agent 钱包后，后续 Pact 在手机里审批。"
+            />
+            <GuideStep
+              index="2"
+              title="测试币准备"
+              status="待完成"
+              active={false}
+              description="还需要 Base Sepolia ETH 付 gas，Base Sepolia USDC 用于支付。"
+            />
+            <GuideStep
+              index="3"
+              title="Pact 授权"
+              status={missingItems.includes("真实 CAW Pact 授权") ? "待完成" : "已完成"}
+              active={!missingItems.includes("真实 CAW Pact 授权")}
+              description="Pact 限制 Agent 能调用哪个合约、最多花多少钱、有效多久。"
+            />
+            <GuideStep
+              index="4"
+              title="真实链上支付"
+              status={cawStatus?.readyForRealPayment ? "可执行" : "等待前置条件"}
+              active={Boolean(cawStatus?.readyForRealPayment)}
+              description="余额不足时，Agent 通过 CAW 调用合约完成 USDC 充值。"
+            />
+          </div>
+          <div className="next-step">
+            <strong>下一步：</strong>
+            <span>{nextStep}</span>
+          </div>
+        </div>
+
         <div className="panel span-8">
           <div className="panel-title">
             <h2>{t.credits}</h2>
@@ -501,7 +547,7 @@ export function DashboardClient({
               </span>
             </div>
           </div>
-          <div className="pact-form">
+          <div className="pact-form demo-hidden">
             <label>
               <span>{t.pactIntent}</span>
               <textarea
@@ -582,6 +628,7 @@ export function DashboardClient({
               {t.faucet}
             </button>
             <button
+              className="demo-hidden"
               onClick={() =>
                 callAction("pact-preview", "/api/wallet/caw/authorization", {
                   ...pactBody,
@@ -593,6 +640,7 @@ export function DashboardClient({
               {t.generatePactPlan}
             </button>
             <button
+              className="demo-hidden"
               onClick={() => callAction("authorize", "/api/wallet/caw/authorization", pactBody)}
               disabled={busyAction === "authorize" || !pactPreview}
             >
@@ -608,7 +656,7 @@ export function DashboardClient({
           </div>
         </div>
 
-        <div className="panel span-12">
+        <div className="panel span-12 demo-hidden">
           <div className="panel-title">
             <h2>{t.pactPreview}</h2>
             <span className={`status ${pactPreview ? "active" : "blocked"}`}>
@@ -674,8 +722,8 @@ export function DashboardClient({
             />
             <StatusItem
               label="Pact 授权"
-              value={cawStatus?.app.authorizationStatus ?? "-"}
-              active={Boolean(cawStatus?.app.activeAuthorization)}
+              value={realPactReady ? "真实 Pact 已就绪" : "缺真实 Pact"}
+              active={realPactReady}
             />
           </div>
           <div className="stack" style={{ marginTop: 14 }}>
@@ -702,8 +750,8 @@ export function DashboardClient({
             <div className="row">
               <span>{t.missing}</span>
               <span className="value">
-                {cawStatus?.missing.length
-                  ? cawStatus.missing.map(formatMissingItem).join("，")
+                {missingItems.length
+                  ? missingItems.join("，")
                   : t.noMissing}
               </span>
             </div>
@@ -978,6 +1026,33 @@ function StatusItem({
   );
 }
 
+function GuideStep({
+  index,
+  title,
+  status,
+  description,
+  active
+}: {
+  index: string;
+  title: string;
+  status: string;
+  description: string;
+  active: boolean;
+}) {
+  return (
+    <div className={`guide-step ${active ? "done" : ""}`}>
+      <div className="guide-index">{index}</div>
+      <div>
+        <div className="guide-heading">
+          <strong>{title}</strong>
+          <span>{status}</span>
+        </div>
+        <p>{description}</p>
+      </div>
+    </div>
+  );
+}
+
 function buildPactBody(input: {
   intent: string;
   singleLimitUsdc: string;
@@ -1034,6 +1109,19 @@ function formatMissingItem(item: string) {
   };
 
   return translations[item] ?? item;
+}
+
+function getNextStep(missingItems: string[]) {
+  if (missingItems.includes("手机 App 配对")) {
+    return "先在手机 CAW App 完成钱包配对。";
+  }
+  if (missingItems.includes("真实 CAW Pact 授权")) {
+    return "先给 CAW 钱包领取 Base Sepolia ETH 和 USDC，然后创建真实 Pact 并在手机 App 里批准。";
+  }
+  if (missingItems.length > 0) {
+    return `还缺：${missingItems.join("，")}。`;
+  }
+  return "可以开始真实链上支付测试。";
 }
 
 function formatInteger(value: number) {
