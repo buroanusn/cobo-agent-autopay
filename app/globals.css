@@ -1,16 +1,16 @@
 :root {
-  --bg: #f6f7f9;
+  --bg: #eef8f1;
   --surface: #ffffff;
-  --surface-soft: #eef4f1;
-  --text: #17201b;
-  --muted: #65706a;
-  --line: #dce2de;
-  --primary: #176b4d;
-  --primary-strong: #0f513a;
-  --accent: #2559a8;
-  --warning: #9c5b0b;
+  --surface-soft: #e8f6ee;
+  --text: #163026;
+  --muted: #5f766b;
+  --line: #cde4d7;
+  --primary: #1d8a5f;
+  --primary-strong: #116a47;
+  --accent: #3aa981;
+  --warning: #9a6a13;
   --danger: #ad2f2f;
-  --radius: 8px;
+  --radius: 18px;
 }
 
 * {
@@ -24,7 +24,10 @@ body {
 }
 
 body {
-  background: var(--bg);
+  background:
+    radial-gradient(circle at 8% 0%, rgba(79, 196, 132, 0.22), transparent 32%),
+    radial-gradient(circle at 96% 8%, rgba(116, 214, 176, 0.24), transparent 28%),
+    linear-gradient(180deg, #f7fff9 0%, var(--bg) 42%, #e9f6ef 100%);
   color: var(--text);
   font-family:
     Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
@@ -41,18 +44,20 @@ textarea {
 button {
   min-height: 40px;
   border: 1px solid transparent;
-  border-radius: 7px;
+  border-radius: 999px;
   padding: 0 14px;
-  background: var(--primary);
+  background: linear-gradient(135deg, #1d8a5f, #22a06f);
   color: white;
   cursor: pointer;
   font-weight: 650;
+  box-shadow: 0 8px 18px rgba(29, 138, 95, 0.18);
 }
 
 button.secondary {
   border-color: var(--line);
-  background: white;
-  color: var(--text);
+  background: rgba(255, 255, 255, 0.82);
+  color: var(--primary-strong);
+  box-shadow: none;
 }
 
 button:disabled {
@@ -69,7 +74,7 @@ button.compact {
 .page {
   width: min(1180px, calc(100% - 32px));
   margin: 0 auto;
-  padding: 32px 0 48px;
+  padding: 36px 0 56px;
 }
 
 .topbar {
@@ -92,6 +97,7 @@ button.compact {
   margin: 0 0 6px;
   font-size: clamp(28px, 4vw, 42px);
   line-height: 1.05;
+  letter-spacing: -0.03em;
 }
 
 .subtitle {
@@ -105,11 +111,11 @@ button.compact {
   display: inline-flex;
   align-items: center;
   min-height: 30px;
-  border: 1px solid var(--line);
+  border: 1px solid rgba(29, 138, 95, 0.18);
   border-radius: 999px;
   padding: 0 12px;
-  background: white;
-  color: var(--muted);
+  background: rgba(255, 255, 255, 0.72);
+  color: var(--primary-strong);
   font-size: 13px;
   font-weight: 650;
   white-space: nowrap;
@@ -122,16 +128,20 @@ button.compact {
 }
 
 .panel {
-  border: 1px solid var(--line);
+  border: 1px solid rgba(205, 228, 215, 0.9);
   border-radius: var(--radius);
-  background: var(--surface);
-  padding: 18px;
+  background: rgba(255, 255, 255, 0.78);
+  padding: 20px;
+  box-shadow:
+    0 18px 50px rgba(22, 48, 38, 0.08),
+    inset 0 1px 0 rgba(255, 255, 255, 0.82);
+  backdrop-filter: blur(14px);
 }
 
 .guide-panel {
-  border-color: #cbded5;
+  border-color: rgba(94, 181, 128, 0.34);
   background:
-    linear-gradient(135deg, rgba(23, 107, 77, 0.08), rgba(37, 89, 168, 0.06)),
+    linear-gradient(135deg, rgba(53, 181, 113, 0.16), rgba(172, 233, 197, 0.2)),
     var(--surface);
 }
 
@@ -145,15 +155,15 @@ button.compact {
   display: grid;
   grid-template-columns: auto 1fr;
   gap: 10px;
-  border: 1px solid var(--line);
-  border-radius: var(--radius);
+  border: 1px solid rgba(205, 228, 215, 0.9);
+  border-radius: 16px;
   padding: 12px;
-  background: rgba(255, 255, 255, 0.75);
+  background: rgba(255, 255, 255, 0.66);
 }
 
 .guide-step.done {
-  border-color: #bdd8cb;
-  background: #f4faf7;
+  border-color: rgba(53, 181, 113, 0.32);
+  background: #f1fbf5;
 }
 
 .guide-index {
@@ -162,7 +172,7 @@ button.compact {
   width: 28px;
   height: 28px;
   border-radius: 50%;
-  background: var(--primary);
+  background: linear-gradient(135deg, #1c8b60, #4ac783);
   color: white;
   font-size: 13px;
   font-weight: 800;
@@ -193,11 +203,11 @@ button.compact {
   display: flex;
   gap: 8px;
   margin-top: 14px;
-  border: 1px solid #ead6a4;
-  border-radius: var(--radius);
+  border: 1px solid rgba(58, 169, 129, 0.28);
+  border-radius: 16px;
   padding: 12px;
-  background: #fff9e8;
-  color: #5c4210;
+  background: #f0fbf5;
+  color: #185238;
   line-height: 1.45;
 }
 
@@ -234,6 +244,8 @@ button.compact {
   font-size: 42px;
   line-height: 1;
   font-weight: 780;
+  color: var(--primary-strong);
+  letter-spacing: -0.04em;
 }
 
 .metric-label {
@@ -266,7 +278,7 @@ button.compact {
 .pact-form textarea {
   width: 100%;
   border: 1px solid var(--line);
-  border-radius: 7px;
+  border-radius: 14px;
   padding: 10px 12px;
   color: var(--text);
   background: white;
@@ -295,10 +307,10 @@ button.compact {
 }
 
 .status-card {
-  border: 1px solid var(--line);
-  border-radius: var(--radius);
+  border: 1px solid rgba(205, 228, 215, 0.9);
+  border-radius: 16px;
   padding: 12px;
-  background: #fbfcfb;
+  background: #f8fffa;
 }
 
 .status-card span {
@@ -373,10 +385,10 @@ button.compact {
 }
 
 .event {
-  border: 1px solid var(--line);
-  border-radius: var(--radius);
+  border: 1px solid rgba(205, 228, 215, 0.9);
+  border-radius: 16px;
   padding: 12px;
-  background: #fbfcfb;
+  background: #f9fffb;
 }
 
 .event strong {
@@ -423,11 +435,11 @@ button.compact {
 }
 
 .notice {
-  border: 1px solid #d4e5dd;
+  border: 1px solid #bfe4d0;
   border-radius: var(--radius);
-  background: var(--surface-soft);
-  padding: 12px;
-  color: #234438;
+  background: #edf9f2;
+  padding: 14px;
+  color: #185238;
   font-size: 14px;
   line-height: 1.45;
 }
