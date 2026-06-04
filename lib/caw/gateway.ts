@@ -262,6 +262,7 @@ class HttpCawGateway implements CawGateway {
     const result = (
       await this.transactionsApi(pactApiKey).contractCall(this.walletId, {
         chain_id: getConfiguredCawChainId(),
+        src_addr: input.walletAddress,
         contract_addr: requiredInput(input.paymentContractAddress, "PAYMENT_CONTRACT_ADDRESS"),
         value: "0",
         calldata,

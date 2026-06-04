@@ -401,6 +401,46 @@ button.compact {
   font-size: 13px;
 }
 
+.compact-event {
+  display: grid;
+  gap: 8px;
+}
+
+.event-line,
+.event-meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.event-line strong {
+  margin-bottom: 0;
+}
+
+.event-meta {
+  justify-content: flex-start;
+  flex-wrap: wrap;
+}
+
+.event-meta span {
+  color: var(--muted);
+}
+
+.amount-positive,
+.amount-negative {
+  font-weight: 800;
+  font-size: 15px;
+}
+
+.amount-positive {
+  color: #147b45;
+}
+
+.amount-negative {
+  color: #a33a2a;
+}
+
 .x402-grid {
   display: grid;
   grid-template-columns: repeat(3, 1fr);

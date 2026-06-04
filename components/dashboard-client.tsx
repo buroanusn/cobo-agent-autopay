@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import type { DashboardSnapshot } from "@/lib/domain/types";
+import type { DashboardSnapshot, LedgerEntry, TopupOrder, TopupOrderStatus } from "@/lib/domain/types";
 import { formatUsdc } from "@/lib/domain/money";
 
 type ApiResult = {
@@ -157,11 +157,13 @@ const copy = {
     noPending: "暂无待审批",
     pendingHint: "大额支付会显示在这里；审批动作在 Cobo App 内完成。",
     waitingApproval: "等待审批",
-    orders: "充值订单",
-    noTopups: "暂无充值",
-    noTopupsHint: "启用 CAW 后，当 Agent 消耗到低余额会自动充值。",
-    ledger: "账本",
+    orders: "支付记录",
+    noTopups: "暂无支付",
+    noTopupsHint: "真实支付成功后，会在这里显示金额、状态和链上交易。",
+    ledger: "Credits 账本",
     balanceAfter: "余额",
+    recentOnly: "仅显示最近 6 条",
+    txHash: "交易",
     runOk: "Agent 已运行；如果余额低于阈值，系统会尝试自动充值。",
     runFailed: "Agent 未运行：积分不足。",
     runPending: "已有充值订单待处理，请先确认订单状态。",
@@ -264,11 +266,13 @@ const copy = {
     noPending: "No pending approvals",
     pendingHint: "Large payments appear here; approval happens in Cobo App.",
     waitingApproval: "waiting approval",
-    orders: "Top-Up Orders",
-    noTopups: "No top-ups yet",
-    noTopupsHint: "After CAW is enabled, low balance will trigger automatic top-up.",
-    ledger: "Ledger",
+    orders: "Payment Records",
+    noTopups: "No payments yet",
+    noTopupsHint: "Real payments appear here with amount, status, and on-chain tx.",
+    ledger: "Credits Ledger",
     balanceAfter: "Balance after",
+    recentOnly: "Latest 6 only",
+    txHash: "Tx",
     runOk: "Agent run finished. If credits crossed the threshold, auto top-up was attempted.",
     runFailed: "Agent did not run: insufficient credits.",
     runPending: "A top-up order is already pending. Check the order status first.",
@@ -399,6 +403,8 @@ export function DashboardClient({
   const missingItems = cawStatus?.missing.map(formatMissingItem) ?? [];
   const realPactReady = Boolean(cawStatus) && !missingItems.includes("真实 CAW Pact 授权");
   const nextStep = getNextStep(missingItems);
+  const recentOrders = snapshot.topupOrders.slice(0, 6);
+  const recentLedgerEntries = snapshot.ledgerEntries.slice(0, 6);
   const pactBody = buildPactBody({
     intent: pactIntent,
     singleLimitUsdc,
@@ -979,21 +985,30 @@ export function DashboardClient({
         <div className="panel span-6">
           <div className="panel-title">
             <h2>{t.orders}</h2>
+            <span className="status active">{t.recentOnly}</span>
           </div>
           <ul className="event-list">
-            {snapshot.topupOrders.length === 0 ? (
+            {recentOrders.length === 0 ? (
               <li className="event">
                 <strong>{t.noTopups}</strong>
                 <span>{t.noTopupsHint}</span>
               </li>
             ) : (
-              snapshot.topupOrders.map((order) => (
-                <li className="event" key={order.id}>
-                  <strong>
-                    {order.status} · {formatUsdc(order.amountUsdcMinor)} USDC
-                  </strong>
+              recentOrders.map((order) => (
+                <li className="event compact-event" key={order.id}>
+                  <div className="event-line">
+                    <strong>{paymentRecordTitle(order, lang)}</strong>
+                    <span className={`status ${paymentStatusClass(order.status)}`}>
+                      {paymentStatusLabel(order.status, lang)}
+                    </span>
+                  </div>
+                  <div className="event-meta">
+                    <span>{formatUsdc(order.amountUsdcMinor)} USDC</span>
+                    <span>{formatInteger(order.credits)} credits</span>
+                    <span>{formatTime(order.creditedAt ?? order.updatedAt)}</span>
+                  </div>
                   <span>
-                    {formatInteger(order.credits)} 积分 · {order.reason} · {order.orderId}
+                    {order.txHash ? `${t.txHash}: ${shortHash(order.txHash)}` : order.failureReason ?? order.orderId}
                   </span>
                 </li>
               ))
@@ -1004,18 +1019,23 @@ export function DashboardClient({
         <div className="panel span-6">
           <div className="panel-title">
             <h2>{t.ledger}</h2>
+            <span className="status active">{t.recentOnly}</span>
           </div>
           <ul className="event-list">
-            {snapshot.ledgerEntries.map((entry) => (
-              <li className="event" key={entry.id}>
-                <strong>
-                  {entry.type} · {entry.creditsDelta > 0 ? "+" : ""}
-                  {formatInteger(entry.creditsDelta)} 积分
-                </strong>
-                <span>
-                  {t.balanceAfter}: {formatInteger(entry.balanceAfterCredits)} ·{" "}
-                  {formatDateTime(entry.createdAt)}
-                </span>
+            {recentLedgerEntries.map((entry) => (
+              <li className="event compact-event" key={entry.id}>
+                <div className="event-line">
+                  <strong>{ledgerEntryTitle(entry.type, lang)}</strong>
+                  <span className={entry.creditsDelta >= 0 ? "amount-positive" : "amount-negative"}>
+                    {entry.creditsDelta > 0 ? "+" : ""}
+                    {formatInteger(entry.creditsDelta)}
+                  </span>
+                </div>
+                <div className="event-meta">
+                  <span>{t.balanceAfter}: {formatInteger(entry.balanceAfterCredits)}</span>
+                  <span>{formatTime(entry.createdAt)}</span>
+                </div>
+                {entry.txHash ? <span>{t.txHash}: {shortHash(entry.txHash)}</span> : null}
               </li>
             ))}
           </ul>
@@ -1165,6 +1185,59 @@ function formatTime(value: string) {
     second: "2-digit",
     hour12: false
   }).format(new Date(value));
+}
+
+function paymentRecordTitle(order: TopupOrder, lang: Lang) {
+  if (order.reason === "x402_resource") {
+    return lang === "zh" ? "x402 付费资源" : "x402 paid resource";
+  }
+  if (order.reason === "low_balance") {
+    return lang === "zh" ? "低余额自动充值" : "Low-balance top-up";
+  }
+  if (order.reason === "insufficient_balance") {
+    return lang === "zh" ? "余额不足补足" : "Insufficient-balance top-up";
+  }
+  if (order.reason === "manual") {
+    return lang === "zh" ? "手动充值" : "Manual top-up";
+  }
+  return lang === "zh" ? "CAW 支付" : "CAW payment";
+}
+
+function paymentStatusLabel(status: TopupOrderStatus, lang: Lang) {
+  if (status === "credited") {
+    return lang === "zh" ? "成功" : "Succeeded";
+  }
+  if (status === "failed" || status === "approval_expired") {
+    return lang === "zh" ? "失败" : "Failed";
+  }
+  return lang === "zh" ? "处理中" : "Processing";
+}
+
+function paymentStatusClass(status: TopupOrderStatus) {
+  if (status === "credited") {
+    return "active";
+  }
+  if (status === "failed" || status === "approval_expired") {
+    return "failed";
+  }
+  return "blocked";
+}
+
+function ledgerEntryTitle(type: LedgerEntry["type"], lang: Lang) {
+  if (type === "auto_topup") {
+    return lang === "zh" ? "充值到账" : "Credits topped up";
+  }
+  if (type === "agent_usage") {
+    return lang === "zh" ? "Agent 消耗" : "Agent usage";
+  }
+  return lang === "zh" ? "初始赠送" : "Opening grant";
+}
+
+function shortHash(value: string) {
+  if (value.length <= 18) {
+    return value;
+  }
+  return `${value.slice(0, 10)}...${value.slice(-6)}`;
 }
 
 function statusMessage(action: string, result: ApiResult, lang: Lang) {
