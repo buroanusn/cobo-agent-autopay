@@ -61,6 +61,26 @@ export type CawGateway = {
   }>;
 };
 
+export type CawRuntimeStatus = {
+  mode: "mock" | "http";
+  environment: "dev" | "prod" | "unknown";
+  apiConfigured: boolean;
+  walletConfigured: boolean;
+  walletId?: string;
+  walletName?: string;
+  walletStatus?: string;
+  walletAddress?: string;
+  walletPaired: boolean;
+  pairTokenStatus?: string;
+  chainId: string;
+  chainName: string;
+  faucetTokenId: string;
+  paymentContractConfigured: boolean;
+  treasuryConfigured: boolean;
+  missing: string[];
+  error?: string;
+};
+
 class MockCawGateway implements CawGateway {
   async createPairingCode(input: { userId: string }) {
     const seed = input.userId.replace(/[^a-z0-9]/gi, "").slice(-5).toUpperCase() || "DEMO1";
@@ -318,6 +338,127 @@ class HttpCawGateway implements CawGateway {
 
 export function createCawGateway(): CawGateway {
   return process.env.CAW_MODE === "http" ? new HttpCawGateway() : new MockCawGateway();
+}
+
+export async function getCawRuntimeStatus(): Promise<CawRuntimeStatus> {
+  const mode = process.env.CAW_MODE === "http" ? "http" : "mock";
+  const apiUrl = process.env.AGENT_WALLET_API_URL || process.env.CAW_API_BASE_URL || "";
+  const apiKey = process.env.AGENT_WALLET_API_KEY || process.env.CAW_API_KEY || "";
+  const walletId = process.env.AGENT_WALLET_WALLET_ID || process.env.CAW_WALLET_ID || "";
+  const chain = getConfiguredChain();
+  const chainId = getConfiguredCawChainId();
+  const baseStatus: CawRuntimeStatus = {
+    mode,
+    environment: inferCawEnvironment(apiUrl),
+    apiConfigured: Boolean(apiUrl && apiKey),
+    walletConfigured: Boolean(walletId),
+    walletId: walletId || undefined,
+    walletPaired: mode === "mock",
+    chainId,
+    chainName: chain.name,
+    faucetTokenId: getDefaultFaucetTokenId(),
+    paymentContractConfigured: Boolean(process.env.PAYMENT_CONTRACT_ADDRESS),
+    treasuryConfigured: Boolean(process.env.TREASURY_ADDRESS),
+    missing: []
+  };
+
+  baseStatus.missing = getRuntimeMissingItems(baseStatus);
+
+  if (mode === "mock") {
+    return {
+      ...baseStatus,
+      walletName: "Mock CAW wallet",
+      walletStatus: "mock_active",
+      walletAddress: process.env.CAW_WALLET_ADDRESS || undefined
+    };
+  }
+
+  if (!apiUrl || !apiKey || !walletId) {
+    return baseStatus;
+  }
+
+  try {
+    const config = new Configuration({ apiKey, basePath: apiUrl.replace(/\/$/, "") });
+    const walletsApi = new WalletsApi(config);
+    const [walletResponse, addressResponse, pairResponse] = await Promise.all([
+      walletsApi.getWallet(walletId).catch((error: unknown) => ({ error })),
+      walletsApi.listWalletAddresses(walletId).catch((error: unknown) => ({ error })),
+      walletsApi.getPairInfoByWallet(walletId).catch((error: unknown) => ({ error }))
+    ]);
+
+    const walletResult =
+      "error" in walletResponse ? undefined : walletResponse.data.result;
+    const addressResult =
+      "error" in addressResponse && addressResponse.error
+        ? undefined
+        : "data" in addressResponse
+          ? addressResponse.data.result
+          : undefined;
+    const pairResult =
+      "error" in pairResponse && pairResponse.error
+        ? undefined
+        : "data" in pairResponse
+          ? pairResponse.data.result
+          : undefined;
+    const firstAddress = Array.isArray(addressResult)
+      ? addressResult.find((address) =>
+          stringField(address as unknown as Record<string, unknown>, "address", "").startsWith("0x")
+        ) ??
+        addressResult[0]
+      : undefined;
+    const pairTokenStatus = pairResult?.token_status;
+    const walletPaired = pairTokenStatus === "paired" || pairTokenStatus === "completed";
+    const status = {
+      ...baseStatus,
+      walletName: walletResult?.name,
+      walletStatus: walletResult?.status,
+      walletAddress: firstAddress?.address,
+      walletPaired,
+      pairTokenStatus
+    };
+
+    return {
+      ...status,
+      missing: getRuntimeMissingItems(status)
+    };
+  } catch (error) {
+    return {
+      ...baseStatus,
+      error: error instanceof Error ? error.message : "Unable to query CAW runtime status."
+    };
+  }
+}
+
+function inferCawEnvironment(apiUrl: string): CawRuntimeStatus["environment"] {
+  if (apiUrl.includes(".dev.") || apiUrl.includes("dev.")) {
+    return "dev";
+  }
+  if (apiUrl) {
+    return "prod";
+  }
+  return "unknown";
+}
+
+function getRuntimeMissingItems(status: Omit<CawRuntimeStatus, "missing">) {
+  const missing: string[] = [];
+
+  if (status.mode === "http" && !status.apiConfigured) {
+    missing.push("CAW API URL/API key");
+  }
+  if (status.mode === "http" && !status.walletConfigured) {
+    missing.push("CAW wallet id");
+  }
+  if (status.mode === "http" && !status.walletPaired) {
+    missing.push("CAW App pairing");
+  }
+  if (!status.paymentContractConfigured) {
+    missing.push("payment contract address");
+  }
+  if (!status.treasuryConfigured) {
+    missing.push("treasury address");
+  }
+
+  return missing;
 }
 
 function requiredEnvAlias(names: string[]) {

@@ -132,25 +132,47 @@ Base Sepolia USDC:
 
 ## What Is Still Missing
 
-Real CAW integration is not complete yet. It needs:
+Real CAW production wallet setup is now partially complete:
 
-```env
-AGENT_WALLET_API_URL=
-AGENT_WALLET_API_KEY=
-AGENT_WALLET_WALLET_ID=
+```text
+Environment: prod
+Agent name: cobo-agent-autopay
+Agent ID: caw_agent_093bca402f6e43db
+Wallet UUID: 351b97b6-4ae5-4d74-8656-b869bb0f6103
+EVM address: 0x6346470a02ab22d8ecc967c980ed747689fa4304
+Wallet status: active
+Wallet paired: true
 ```
 
-After those are available, set:
+Local `.env` contains the production CAW API URL, API key, and wallet UUID. It is ignored by git and must not be committed.
 
-```env
-CAW_MODE=http
-```
+The CAW integration status API and Dashboard panel are implemented:
+
+- `GET /api/wallet/caw/status`
+- Dashboard section: "Real CAW Integration Status" / "真实 CAW 接入状态"
+- It returns only redacted status and never returns CAW API keys or private keys.
 
 The CAW wallet must also have:
 
 - Base Sepolia ETH for gas.
 - Base Sepolia USDC for payment.
 - USDC allowance granted to `PAYMENT_CONTRACT_ADDRESS`.
+
+Known funding state:
+
+```text
+SETH: 0.01 received from CAW faucet
+Base Sepolia ETH: missing
+Base Sepolia USDC: missing
+```
+
+Important chain id note:
+
+```text
+Project chain: Base Sepolia
+CAW chain id: TBASE_SETH
+Old incorrect value: BASE_SEPOLIA
+```
 
 Allowance spender:
 
@@ -175,45 +197,41 @@ CLI path:
 Next CAW command to run:
 
 ```bash
-caw onboard
+caw wallet balance --chain-id TBASE_SETH
 ```
 
-After onboarding:
+Useful production CAW checks:
 
 ```bash
-caw wallet current --show-api-key
+caw status
+caw wallet pair-status
+caw wallet balance --token-id SETH
+curl -s http://127.0.0.1:3000/api/wallet/caw/status
 ```
 
-Map output into project `.env`:
-
-```env
-AGENT_WALLET_API_URL=<api_url>
-AGENT_WALLET_API_KEY=<api_key>
-AGENT_WALLET_WALLET_ID=<wallet_uuid>
-```
+Do not run a new `caw onboard` unless intentionally creating a new wallet/profile.
 
 ## Recommended Next Tasks
 
-1. Build a readiness panel/API.
-   - Show whether `CAW_MODE`, CAW credentials, contract address, treasury address, RPC, and chain settings are ready.
-   - Do not expose secret values.
+1. Fund the production CAW wallet on Base Sepolia.
+   - Address: `0x6346470a02ab22d8ecc967c980ed747689fa4304`.
+   - Needs Base Sepolia ETH for gas.
+   - Needs Base Sepolia USDC for the `CreditsPayment` contract.
 
-2. Run CAW onboarding.
-   - Execute `caw onboard`.
-   - Pair wallet in Cobo Agentic Wallet app.
-   - Save API URL, API key, and wallet UUID into `.env`.
+2. Create a real CAW Pact.
+   - Use `CAW_MODE=http`.
+   - Chain must be `TBASE_SETH`.
+   - Target contract must be `0x1047e3c9476b57ecb4c794737ead8f5c8b8c6b05`.
+   - Owner approves in the production Cobo Agentic Wallet App.
 
-3. Switch from mock to real CAW.
-   - Set `CAW_MODE=http`.
-   - Test pairing code.
-   - Test Pact submit.
-   - Approve Pact in app.
-   - Refresh Pact.
+3. Refresh Pact and verify readiness.
+   - `POST /api/wallet/caw/authorization/refresh`
+   - `GET /api/wallet/caw/status`
+   - The status panel should no longer show `real CAW Pact authorization` as missing.
 
-4. Fund CAW wallet.
-   - Add Base Sepolia ETH.
-   - Add Base Sepolia USDC.
-   - Grant USDC allowance to the deployed `CreditsPayment` contract.
+4. Grant USDC allowance if required.
+   - The current `CreditsPayment` contract uses `USDC.transferFrom`.
+   - The CAW wallet may need an ERC-20 approval transaction for the payment contract.
 
 5. Run real payment test.
    - Trigger manual top-up.

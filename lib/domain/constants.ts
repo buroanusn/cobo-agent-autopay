@@ -21,7 +21,7 @@ export function getConfiguredChain() {
 }
 
 export function getConfiguredCawChainId() {
-  return process.env.CAW_CHAIN_ID || (process.env.CHAIN_ENV === "base-mainnet" ? "BASE_ETH" : "BASE_SEPOLIA");
+  return process.env.CAW_CHAIN_ID || (process.env.CHAIN_ENV === "base-mainnet" ? "BASE_ETH" : "TBASE_SETH");
 }
 
 export const USDC_DECIMALS = 6;

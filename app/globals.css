@@ -175,6 +175,40 @@ button.compact {
   margin-top: 16px;
 }
 
+.status-grid {
+  display: grid;
+  grid-template-columns: repeat(6, 1fr);
+  gap: 10px;
+}
+
+.status-card {
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 12px;
+  background: #fbfcfb;
+}
+
+.status-card span {
+  display: block;
+  margin-bottom: 6px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.status-card strong {
+  display: block;
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+
+.status-card strong.ok {
+  color: var(--primary-strong);
+}
+
+.status-card strong.bad {
+  color: var(--danger);
+}
+
 .stack {
   display: grid;
   gap: 10px;
@@ -282,6 +316,10 @@ button.compact {
   .span-6,
   .span-4 {
     grid-column: span 12;
+  }
+
+  .status-grid {
+    grid-template-columns: repeat(2, 1fr);
   }
 
   .x402-grid {

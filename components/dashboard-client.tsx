@@ -26,6 +26,36 @@ type ApiResult = {
   };
 };
 
+type CawStatusResult = {
+  runtime: {
+    mode: "mock" | "http";
+    environment: "dev" | "prod" | "unknown";
+    apiConfigured: boolean;
+    walletConfigured: boolean;
+    walletId?: string;
+    walletName?: string;
+    walletStatus?: string;
+    walletAddress?: string;
+    walletPaired: boolean;
+    pairTokenStatus?: string;
+    chainId: string;
+    chainName: string;
+    faucetTokenId: string;
+    paymentContractConfigured: boolean;
+    treasuryConfigured: boolean;
+    missing: string[];
+    error?: string;
+  };
+  app: {
+    connectedWalletAddress?: string;
+    authorizationStatus: string;
+    pactId?: string;
+    activeAuthorization: boolean;
+  };
+  readyForRealPayment: boolean;
+  missing: string[];
+};
+
 type Lang = "zh" | "en";
 
 const copy = {
@@ -101,6 +131,19 @@ const copy = {
     x402Credential: "付款凭证",
     x402Resource: "资源",
     x402Trace: "流程记录",
+    integrationStatus: "真实 CAW 接入状态",
+    environment: "环境",
+    mode: "模式",
+    configured: "已配置",
+    missing: "缺少",
+    walletStatus: "钱包状态",
+    paired: "已配对",
+    notPaired: "未配对",
+    appWallet: "应用钱包",
+    readyForPayment: "可真实支付",
+    notReady: "未就绪",
+    noMissing: "关键配置已齐",
+    statusHint: "这里只展示脱敏状态，API key 和私钥不会返回到浏览器。",
     done: "完成。"
   },
   en: {
@@ -175,6 +218,19 @@ const copy = {
     x402Credential: "Payment credential",
     x402Resource: "Resource",
     x402Trace: "Trace",
+    integrationStatus: "Real CAW Integration Status",
+    environment: "Environment",
+    mode: "Mode",
+    configured: "Configured",
+    missing: "Missing",
+    walletStatus: "Wallet status",
+    paired: "Paired",
+    notPaired: "Not paired",
+    appWallet: "App wallet",
+    readyForPayment: "Ready for real payment",
+    notReady: "Not ready",
+    noMissing: "Core configuration is ready",
+    statusHint: "Only redacted status is shown here. API keys and private keys never reach the browser.",
     done: "Done."
   }
 } as const;
@@ -189,6 +245,7 @@ export function DashboardClient({
   const [message, setMessage] = useState<string>();
   const [error, setError] = useState<string>();
   const [x402Result, setX402Result] = useState<ApiResult>();
+  const [cawStatus, setCawStatus] = useState<CawStatusResult>();
   const [lang, setLang] = useState<Lang>("zh");
   const [prompt, setPrompt] = useState(
     "Analyze the user's portfolio and continue the agent task."
@@ -199,9 +256,16 @@ export function DashboardClient({
   }, []);
 
   async function refresh() {
-    const response = await fetch("/api/credits/balance", { cache: "no-store" });
-    const nextSnapshot = (await response.json()) as DashboardSnapshot;
+    const [snapshotResponse, cawStatusResponse] = await Promise.all([
+      fetch("/api/credits/balance", { cache: "no-store" }),
+      fetch("/api/wallet/caw/status", { cache: "no-store" })
+    ]);
+    const nextSnapshot = (await snapshotResponse.json()) as DashboardSnapshot;
     setSnapshot(nextSnapshot);
+
+    if (cawStatusResponse.ok) {
+      setCawStatus((await cawStatusResponse.json()) as CawStatusResult);
+    }
   }
 
   async function callAction(action: string, path: string, body: Record<string, unknown> = {}) {
@@ -230,6 +294,7 @@ export function DashboardClient({
       }
 
       setMessage(statusMessage(action, result, lang));
+      void refresh();
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "Request failed.");
     } finally {
@@ -384,6 +449,68 @@ export function DashboardClient({
               {t.refreshPact}
             </button>
           </div>
+        </div>
+
+        <div className="panel span-12">
+          <div className="panel-title">
+            <h2>{t.integrationStatus}</h2>
+            <span className={`status ${cawStatus?.readyForRealPayment ? "active" : "blocked"}`}>
+              {cawStatus?.readyForRealPayment ? t.readyForPayment : t.notReady}
+            </span>
+          </div>
+          <div className="status-grid">
+            <StatusItem label={t.environment} value={cawStatus?.runtime.environment ?? "-"} />
+            <StatusItem label={t.mode} value={cawStatus?.runtime.mode ?? "-"} />
+            <StatusItem
+              label="API"
+              value={cawStatus?.runtime.apiConfigured ? t.configured : t.missing}
+              active={Boolean(cawStatus?.runtime.apiConfigured)}
+            />
+            <StatusItem
+              label={t.walletStatus}
+              value={cawStatus?.runtime.walletStatus ?? "-"}
+              active={cawStatus?.runtime.walletStatus === "active" || cawStatus?.runtime.mode === "mock"}
+            />
+            <StatusItem
+              label={t.paired}
+              value={cawStatus?.runtime.walletPaired ? t.paired : t.notPaired}
+              active={Boolean(cawStatus?.runtime.walletPaired)}
+            />
+            <StatusItem
+              label="Pact"
+              value={cawStatus?.app.authorizationStatus ?? "-"}
+              active={Boolean(cawStatus?.app.activeAuthorization)}
+            />
+          </div>
+          <div className="stack" style={{ marginTop: 14 }}>
+            <div className="row">
+              <span>Wallet ID</span>
+              <span className="value">{cawStatus?.runtime.walletId ?? "-"}</span>
+            </div>
+            <div className="row">
+              <span>{t.wallet}</span>
+              <span className="value">{cawStatus?.runtime.walletAddress ?? "-"}</span>
+            </div>
+            <div className="row">
+              <span>{t.appWallet}</span>
+              <span className="value">{cawStatus?.app.connectedWalletAddress ?? "-"}</span>
+            </div>
+            <div className="row">
+              <span>{t.chains}</span>
+              <span className="value">
+                {cawStatus
+                  ? `${cawStatus.runtime.chainName} · ${cawStatus.runtime.chainId}`
+                  : "-"}
+              </span>
+            </div>
+            <div className="row">
+              <span>{t.missing}</span>
+              <span className="value">
+                {cawStatus?.missing.length ? cawStatus.missing.join(", ") : t.noMissing}
+              </span>
+            </div>
+          </div>
+          <p className="metric-label">{cawStatus?.runtime.error ?? t.statusHint}</p>
         </div>
 
         <div className="panel span-4">
@@ -632,6 +759,23 @@ export function DashboardClient({
         </div>
       </section>
     </main>
+  );
+}
+
+function StatusItem({
+  label,
+  value,
+  active
+}: {
+  label: string;
+  value: string;
+  active?: boolean;
+}) {
+  return (
+    <div className="status-card">
+      <span>{label}</span>
+      <strong className={active === undefined ? undefined : active ? "ok" : "bad"}>{value}</strong>
+    </div>
   );
 }
 

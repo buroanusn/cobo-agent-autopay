@@ -1,4 +1,4 @@
-import { createCawGateway } from "@/lib/caw/gateway";
+import { createCawGateway, getCawRuntimeStatus } from "@/lib/caw/gateway";
 import {
   CREDITS_PER_USDC,
   DEFAULT_SPEND_POLICY,
@@ -15,6 +15,45 @@ type AutoTopupReason = "low_balance" | "insufficient_balance" | "manual" | "x402
 
 export async function getDashboardSnapshot(userId = DEMO_USER_ID) {
   return getCreditRepository().snapshotForUser(userId);
+}
+
+export async function getCawIntegrationStatus(userId = DEMO_USER_ID) {
+  const [runtime, snapshot] = await Promise.all([
+    getCawRuntimeStatus(),
+    getDashboardSnapshot(userId)
+  ]);
+  const activeAuthorization = snapshot.authorization?.status === "active";
+  const missing = [...runtime.missing];
+
+  if (!snapshot.user.cawWalletAddress) {
+    missing.push("connected CAW wallet address");
+  }
+  if (
+    runtime.mode === "http" &&
+    runtime.walletAddress &&
+    snapshot.user.cawWalletAddress &&
+    runtime.walletAddress.toLowerCase() !== snapshot.user.cawWalletAddress.toLowerCase()
+  ) {
+    missing.push("connected wallet does not match CAW runtime wallet");
+  }
+  if (!activeAuthorization) {
+    missing.push("active Pact authorization");
+  }
+  if (runtime.mode === "http" && snapshot.authorization?.pactId.startsWith("mock_")) {
+    missing.push("real CAW Pact authorization");
+  }
+
+  return {
+    runtime,
+    app: {
+      connectedWalletAddress: snapshot.user.cawWalletAddress,
+      authorizationStatus: snapshot.authorization?.status ?? "missing",
+      pactId: snapshot.authorization?.pactId,
+      activeAuthorization
+    },
+    readyForRealPayment: missing.length === 0,
+    missing
+  };
 }
 
 export async function createPairingCode(input: { userId?: string }) {
