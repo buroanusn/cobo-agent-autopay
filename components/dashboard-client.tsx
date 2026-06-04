@@ -360,10 +360,10 @@ export function DashboardClient({
                 : t.ready}
             </span>
           </div>
-          <div className="metric">{account.balanceCredits.toLocaleString()}</div>
+          <div className="metric">{formatInteger(account.balanceCredits)}</div>
           <div className="metric-label">
-            {t.threshold}: {account.lowBalanceThresholdCredits.toLocaleString()} 积分 ·
-            {t.autoTopup}: {account.autoTopupCredits.toLocaleString()} 积分
+            {t.threshold}: {formatInteger(account.lowBalanceThresholdCredits)} 积分 ·
+            {t.autoTopup}: {formatInteger(account.autoTopupCredits)} 积分
           </div>
 
           <div className="actions">
@@ -555,7 +555,7 @@ export function DashboardClient({
               <span>{t.expires}</span>
               <span className="value">
                 {snapshot.pairingSession
-                  ? new Date(snapshot.pairingSession.expiresAt).toLocaleTimeString()
+                  ? formatTime(snapshot.pairingSession.expiresAt)
                   : "-"}
               </span>
             </div>
@@ -732,7 +732,7 @@ export function DashboardClient({
               snapshot.pendingApprovals.map((order) => (
                 <li className="event" key={order.id}>
                   <strong>{formatUsdc(order.amountUsdcMinor)} USDC · {t.waitingApproval}</strong>
-                  <span>{order.walletAddress} · {new Date(order.createdAt).toLocaleString()}</span>
+                  <span>{order.walletAddress} · {formatDateTime(order.createdAt)}</span>
                 </li>
               ))
             )}
@@ -756,7 +756,7 @@ export function DashboardClient({
                     {order.status} · {formatUsdc(order.amountUsdcMinor)} USDC
                   </strong>
                   <span>
-                    {order.credits.toLocaleString()} credits · {order.reason} · {order.orderId}
+                    {formatInteger(order.credits)} 积分 · {order.reason} · {order.orderId}
                   </span>
                 </li>
               ))
@@ -773,11 +773,11 @@ export function DashboardClient({
               <li className="event" key={entry.id}>
                 <strong>
                   {entry.type} · {entry.creditsDelta > 0 ? "+" : ""}
-                  {entry.creditsDelta.toLocaleString()} credits
+                  {formatInteger(entry.creditsDelta)} 积分
                 </strong>
                 <span>
-                  {t.balanceAfter}: {entry.balanceAfterCredits.toLocaleString()} ·{" "}
-                  {new Date(entry.createdAt).toLocaleString()}
+                  {t.balanceAfter}: {formatInteger(entry.balanceAfterCredits)} ·{" "}
+                  {formatDateTime(entry.createdAt)}
                 </span>
               </li>
             ))}
@@ -829,6 +829,33 @@ function formatMissingItem(item: string) {
   };
 
   return translations[item] ?? item;
+}
+
+function formatInteger(value: number) {
+  return new Intl.NumberFormat("zh-CN").format(value);
+}
+
+function formatDateTime(value: string) {
+  return new Intl.DateTimeFormat("zh-CN", {
+    timeZone: "Asia/Shanghai",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hour12: false
+  }).format(new Date(value));
+}
+
+function formatTime(value: string) {
+  return new Intl.DateTimeFormat("zh-CN", {
+    timeZone: "Asia/Shanghai",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hour12: false
+  }).format(new Date(value));
 }
 
 function statusMessage(action: string, result: ApiResult, lang: Lang) {
