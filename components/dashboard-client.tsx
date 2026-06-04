@@ -8,6 +8,7 @@ type ApiResult = {
   ok?: boolean;
   snapshot?: DashboardSnapshot;
   error?: string;
+  preview?: CawPactPreview;
   status?: string;
   reason?: string;
   note?: string;
@@ -38,6 +39,20 @@ type ApiResult = {
   resource?: {
     title: string;
     content: string;
+  };
+};
+
+type CawPactPreview = {
+  intent: string;
+  originalIntent: string;
+  executionPlan: string;
+  policies: unknown[];
+  completionConditions: unknown[];
+  limits: {
+    singleLimitUsdcMinor: number;
+    dailyLimitUsdcMinor: number;
+    monthlyLimitUsdcMinor: number;
+    validDays: number;
   };
 };
 
@@ -97,7 +112,20 @@ const copy = {
     pair: "生成配对码",
     connect: "连接 CAW",
     enablePact: "启用 Pact",
+    generatePactPlan: "生成 Pact 计划",
+    submitPact: "提交 Pact",
     refreshPact: "刷新 Pact",
+    pactIntent: "授权意图",
+    pactSingleLimit: "单笔 USDC",
+    pactDailyLimit: "每日 USDC",
+    pactMonthlyLimit: "每月 USDC",
+    pactValidDays: "有效天数",
+    pactPreview: "Pact 预览",
+    pactPreviewHint: "先根据用户意图生成 CAW 计划，确认后再提交到 Cobo App 审批。",
+    originalIntent: "用户原始意图",
+    executionPlan: "执行计划",
+    policies: "权限策略",
+    completionConditions: "结束条件",
     faucet: "领取测试币",
     onboarding: "Onboarding",
     notStarted: "未开始",
@@ -137,6 +165,7 @@ const copy = {
     topupOk: "充值",
     connectOk: "CAW 钱包已连接。",
     authorizeOk: "Pact 已启用。mock 模式会立即激活；真实模式需用户在 App 内审批。",
+    pactPreviewOk: "Pact 计划已生成，请确认内容后提交到 Cobo App 审批。",
     refreshPactOk: "Pact 状态已刷新。如果用户已在 Cobo App 审批，系统会保存 pact-scoped API key。",
     faucetOk: "测试币请求已提交。真实模式会调用 CAW Faucet；mock 模式只返回模拟结果。",
     pairOk: "配对码已生成。请在 Cobo Agentic Wallet App 内完成绑定。",
@@ -188,7 +217,20 @@ const copy = {
     pair: "Generate Pairing Code",
     connect: "Connect CAW",
     enablePact: "Enable Pact",
+    generatePactPlan: "Generate Pact Plan",
+    submitPact: "Submit Pact",
     refreshPact: "Refresh Pact",
+    pactIntent: "Authorization intent",
+    pactSingleLimit: "Single USDC",
+    pactDailyLimit: "Daily USDC",
+    pactMonthlyLimit: "Monthly USDC",
+    pactValidDays: "Valid days",
+    pactPreview: "Pact Preview",
+    pactPreviewHint: "Generate a CAW plan from the user's intent first, then submit it for Cobo App approval.",
+    originalIntent: "Original intent",
+    executionPlan: "Execution plan",
+    policies: "Policies",
+    completionConditions: "Completion conditions",
     faucet: "Request Test Tokens",
     onboarding: "Onboarding",
     notStarted: "not started",
@@ -228,6 +270,7 @@ const copy = {
     topupOk: "Top-up",
     connectOk: "CAW wallet connected.",
     authorizeOk: "Pact is enabled. Mock mode activates immediately; real mode requires app approval.",
+    pactPreviewOk: "Pact plan generated. Review it before submitting for Cobo App approval.",
     refreshPactOk: "Pact status refreshed. If approved in Cobo App, the pact-scoped API key is now stored.",
     faucetOk: "Test token request submitted. Real mode calls CAW Faucet; mock mode returns a simulated result.",
     pairOk: "Pairing code generated. Complete pairing in Cobo Agentic Wallet App.",
@@ -269,10 +312,18 @@ export function DashboardClient({
   const [error, setError] = useState<string>();
   const [x402Result, setX402Result] = useState<ApiResult>();
   const [cawStatus, setCawStatus] = useState<CawStatusResult>();
+  const [pactPreview, setPactPreview] = useState<CawPactPreview>();
   const [lang, setLang] = useState<Lang>("zh");
   const [prompt, setPrompt] = useState(
     "Analyze the user's portfolio and continue the agent task."
   );
+  const [pactIntent, setPactIntent] = useState(
+    "允许这个 Agent 在我的站内 credits 余额不足时，使用 Base Sepolia USDC 自动充值；每次最多 5 USDC，每天最多 20 USDC，有效期 7 天。"
+  );
+  const [singleLimitUsdc, setSingleLimitUsdc] = useState("5");
+  const [dailyLimitUsdc, setDailyLimitUsdc] = useState("20");
+  const [monthlyLimitUsdc, setMonthlyLimitUsdc] = useState("100");
+  const [validDays, setValidDays] = useState("7");
 
   useEffect(() => {
     void refresh();
@@ -316,6 +367,14 @@ export function DashboardClient({
         setX402Result(result);
       }
 
+      if (action === "pact-preview" && result.preview) {
+        setPactPreview(result.preview);
+      }
+
+      if (action === "authorize") {
+        setPactPreview(undefined);
+      }
+
       setMessage(statusMessage(action, result, lang));
       void refresh();
     } catch (caught) {
@@ -331,7 +390,13 @@ export function DashboardClient({
   const guardrails = snapshot.guardrails;
   const stats = snapshot.paymentStats;
   const walletConnected = Boolean(snapshot.user.cawWalletAddress);
-  const authActive = authorization?.status === "active";
+  const pactBody = buildPactBody({
+    intent: pactIntent,
+    singleLimitUsdc,
+    dailyLimitUsdc,
+    monthlyLimitUsdc,
+    validDays
+  });
 
   return (
     <main className="page">
@@ -436,6 +501,64 @@ export function DashboardClient({
               </span>
             </div>
           </div>
+          <div className="pact-form">
+            <label>
+              <span>{t.pactIntent}</span>
+              <textarea
+                value={pactIntent}
+                onChange={(event) => {
+                  setPactIntent(event.target.value);
+                  setPactPreview(undefined);
+                }}
+              />
+            </label>
+            <div className="limits-grid">
+              <label>
+                <span>{t.pactSingleLimit}</span>
+                <input
+                  inputMode="decimal"
+                  value={singleLimitUsdc}
+                  onChange={(event) => {
+                    setSingleLimitUsdc(event.target.value);
+                    setPactPreview(undefined);
+                  }}
+                />
+              </label>
+              <label>
+                <span>{t.pactDailyLimit}</span>
+                <input
+                  inputMode="decimal"
+                  value={dailyLimitUsdc}
+                  onChange={(event) => {
+                    setDailyLimitUsdc(event.target.value);
+                    setPactPreview(undefined);
+                  }}
+                />
+              </label>
+              <label>
+                <span>{t.pactMonthlyLimit}</span>
+                <input
+                  inputMode="decimal"
+                  value={monthlyLimitUsdc}
+                  onChange={(event) => {
+                    setMonthlyLimitUsdc(event.target.value);
+                    setPactPreview(undefined);
+                  }}
+                />
+              </label>
+              <label>
+                <span>{t.pactValidDays}</span>
+                <input
+                  inputMode="numeric"
+                  value={validDays}
+                  onChange={(event) => {
+                    setValidDays(event.target.value);
+                    setPactPreview(undefined);
+                  }}
+                />
+              </label>
+            </div>
+          </div>
           <div className="actions">
             <button
               className="secondary"
@@ -459,10 +582,21 @@ export function DashboardClient({
               {t.faucet}
             </button>
             <button
-              onClick={() => callAction("authorize", "/api/wallet/caw/authorization")}
-              disabled={busyAction === "authorize" || authActive}
+              onClick={() =>
+                callAction("pact-preview", "/api/wallet/caw/authorization", {
+                  ...pactBody,
+                  previewOnly: true
+                })
+              }
+              disabled={busyAction === "pact-preview"}
             >
-              {t.enablePact}
+              {t.generatePactPlan}
+            </button>
+            <button
+              onClick={() => callAction("authorize", "/api/wallet/caw/authorization", pactBody)}
+              disabled={busyAction === "authorize" || !pactPreview}
+            >
+              {t.submitPact}
             </button>
             <button
               className="secondary"
@@ -472,6 +606,45 @@ export function DashboardClient({
               {t.refreshPact}
             </button>
           </div>
+        </div>
+
+        <div className="panel span-12">
+          <div className="panel-title">
+            <h2>{t.pactPreview}</h2>
+            <span className={`status ${pactPreview ? "active" : "blocked"}`}>
+              {pactPreview ? t.ready : t.notCreated}
+            </span>
+          </div>
+          <p className="metric-label">{t.pactPreviewHint}</p>
+          {pactPreview ? (
+            <div className="preview-grid">
+              <div className="event">
+                <strong>Intent</strong>
+                <span>{pactPreview.intent}</span>
+              </div>
+              <div className="event">
+                <strong>{t.originalIntent}</strong>
+                <span>{pactPreview.originalIntent}</span>
+              </div>
+              <div className="event preview-wide">
+                <strong>{t.executionPlan}</strong>
+                <pre>{pactPreview.executionPlan}</pre>
+              </div>
+              <div className="event">
+                <strong>{t.policies}</strong>
+                <pre>{JSON.stringify(pactPreview.policies, null, 2)}</pre>
+              </div>
+              <div className="event">
+                <strong>{t.completionConditions}</strong>
+                <pre>{JSON.stringify(pactPreview.completionConditions, null, 2)}</pre>
+              </div>
+            </div>
+          ) : (
+            <div className="event">
+              <strong>{t.notCreated}</strong>
+              <span>{t.pactPreviewHint}</span>
+            </div>
+          )}
         </div>
 
         <div className="panel span-12">
@@ -805,6 +978,38 @@ function StatusItem({
   );
 }
 
+function buildPactBody(input: {
+  intent: string;
+  singleLimitUsdc: string;
+  dailyLimitUsdc: string;
+  monthlyLimitUsdc: string;
+  validDays: string;
+}) {
+  return {
+    intent: input.intent,
+    singleLimitUsdcMinor: parseUsdcInput(input.singleLimitUsdc),
+    dailyLimitUsdcMinor: parseUsdcInput(input.dailyLimitUsdc),
+    monthlyLimitUsdcMinor: parseUsdcInput(input.monthlyLimitUsdc),
+    validDays: parsePositiveInteger(input.validDays)
+  };
+}
+
+function parseUsdcInput(value: string) {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    return 0;
+  }
+  return Math.round(parsed * 1_000_000);
+}
+
+function parsePositiveInteger(value: string) {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    return 1;
+  }
+  return Math.floor(parsed);
+}
+
 function formatMode(mode: CawStatusResult["runtime"]["mode"] | undefined) {
   if (mode === "http") {
     return "真实 CAW";
@@ -887,6 +1092,10 @@ function statusMessage(action: string, result: ApiResult, lang: Lang) {
 
   if (action === "authorize") {
     return t.authorizeOk;
+  }
+
+  if (action === "pact-preview") {
+    return t.pactPreviewOk;
   }
 
   if (action === "refresh-pact") {

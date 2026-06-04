@@ -13,6 +13,20 @@ import { getCreditRepository } from "@/lib/store";
 
 type AutoTopupReason = "low_balance" | "insufficient_balance" | "manual" | "x402_resource";
 
+export type CawPactPreview = {
+  intent: string;
+  originalIntent: string;
+  executionPlan: string;
+  policies: unknown[];
+  completionConditions: unknown[];
+  limits: {
+    singleLimitUsdcMinor: number;
+    dailyLimitUsdcMinor: number;
+    monthlyLimitUsdcMinor: number;
+    validDays: number;
+  };
+};
+
 export async function getDashboardSnapshot(userId = DEMO_USER_ID) {
   return getCreditRepository().snapshotForUser(userId);
 }
@@ -135,6 +149,7 @@ export async function connectCawWallet(input: {
 
 export async function createCawAuthorization(input: {
   userId?: string;
+  intent?: string;
   singleLimitUsdcMinor?: number;
   dailyLimitUsdcMinor?: number;
   monthlyLimitUsdcMinor?: number;
@@ -145,7 +160,7 @@ export async function createCawAuthorization(input: {
   const user = await repository.requireUser(userId);
   const walletAddress = user.cawWalletAddress ?? DEMO_CAW_WALLET;
   const createdAt = repository.nowIso();
-  const chain = getConfiguredChain();
+  const { preview } = await previewCawAuthorization(input);
   const expiresAt = new Date(
     Date.now() + (input.validDays ?? DEFAULT_SPEND_POLICY.validDays) * 24 * 60 * 60 * 1000
   ).toISOString();
@@ -154,12 +169,16 @@ export async function createCawAuthorization(input: {
     userId,
     walletAddress,
     contractAddress: process.env.PAYMENT_CONTRACT_ADDRESS,
-    usdcAddress: chain.usdcAddress,
-    singleLimitUsdcMinor: input.singleLimitUsdcMinor ?? DEFAULT_SPEND_POLICY.singleLimitUsdcMinor,
-    dailyLimitUsdcMinor: input.dailyLimitUsdcMinor ?? DEFAULT_SPEND_POLICY.dailyLimitUsdcMinor,
-    monthlyLimitUsdcMinor:
-      input.monthlyLimitUsdcMinor ?? DEFAULT_SPEND_POLICY.monthlyLimitUsdcMinor,
-    expiresAt
+    usdcAddress: getConfiguredChain().usdcAddress,
+    singleLimitUsdcMinor: preview.limits.singleLimitUsdcMinor,
+    dailyLimitUsdcMinor: preview.limits.dailyLimitUsdcMinor,
+    monthlyLimitUsdcMinor: preview.limits.monthlyLimitUsdcMinor,
+    expiresAt,
+    pactIntent: preview.intent,
+    originalIntent: preview.originalIntent,
+    executionPlan: preview.executionPlan,
+    policies: preview.policies,
+    completionConditions: preview.completionConditions
   });
 
   const authorization: CawAuthorization = {
@@ -169,10 +188,9 @@ export async function createCawAuthorization(input: {
     pactId: pact.pactId,
     pactApiKey: pact.pactApiKey,
     status: pact.status,
-    singleLimitUsdcMinor: input.singleLimitUsdcMinor ?? DEFAULT_SPEND_POLICY.singleLimitUsdcMinor,
-    dailyLimitUsdcMinor: input.dailyLimitUsdcMinor ?? DEFAULT_SPEND_POLICY.dailyLimitUsdcMinor,
-    monthlyLimitUsdcMinor:
-      input.monthlyLimitUsdcMinor ?? DEFAULT_SPEND_POLICY.monthlyLimitUsdcMinor,
+    singleLimitUsdcMinor: preview.limits.singleLimitUsdcMinor,
+    dailyLimitUsdcMinor: preview.limits.dailyLimitUsdcMinor,
+    monthlyLimitUsdcMinor: preview.limits.monthlyLimitUsdcMinor,
     spentTodayUsdcMinor: 0,
     spentMonthUsdcMinor: 0,
     dailyWindowStart: createdAt,
@@ -187,7 +205,103 @@ export async function createCawAuthorization(input: {
   return {
     authorization,
     approvalUrl: pact.approvalUrl,
+    preview,
     snapshot: await repository.snapshotForUser(userId)
+  };
+}
+
+export async function previewCawAuthorization(input: {
+  userId?: string;
+  intent?: string;
+  singleLimitUsdcMinor?: number;
+  dailyLimitUsdcMinor?: number;
+  monthlyLimitUsdcMinor?: number;
+  validDays?: number;
+}): Promise<{ preview: CawPactPreview }> {
+  const repository = getCreditRepository();
+  const userId = input.userId ?? DEMO_USER_ID;
+  const user = await repository.requireUser(userId);
+  const walletAddress = user.cawWalletAddress ?? DEMO_CAW_WALLET;
+  const chain = getConfiguredChain();
+  const coboChainId = getConfiguredCawChainId();
+  const contractAddress = process.env.PAYMENT_CONTRACT_ADDRESS;
+
+  if (!contractAddress) {
+    throw new Error("PAYMENT_CONTRACT_ADDRESS is required to preview a real CAW Pact.");
+  }
+
+  const limits = {
+    singleLimitUsdcMinor: input.singleLimitUsdcMinor ?? DEFAULT_SPEND_POLICY.singleLimitUsdcMinor,
+    dailyLimitUsdcMinor: input.dailyLimitUsdcMinor ?? DEFAULT_SPEND_POLICY.dailyLimitUsdcMinor,
+    monthlyLimitUsdcMinor:
+      input.monthlyLimitUsdcMinor ?? DEFAULT_SPEND_POLICY.monthlyLimitUsdcMinor,
+    validDays: input.validDays ?? DEFAULT_SPEND_POLICY.validDays
+  };
+  const userIntent =
+    input.intent?.trim() ||
+    "Allow this agent to automatically top up my internal credits with Base Sepolia USDC when the balance is low.";
+  const timeElapsedSeconds = Math.max(1, limits.validDays * 24 * 60 * 60);
+  const policies = [
+    {
+      name: "credits-payment-contract-call",
+      type: "contract_call",
+      rules: {
+        effect: "allow",
+        when: {
+          chain_in: [coboChainId],
+          target_in: [
+            { chain_id: coboChainId, contract_addr: contractAddress },
+            { chain_id: coboChainId, contract_addr: chain.usdcAddress }
+          ]
+        },
+        deny_if: {
+          usage_limits: {
+            rolling_24h: {
+              tx_count_gt: 10
+            }
+          }
+        }
+      },
+      priority: 100,
+      is_active: true
+    }
+  ];
+  const completionConditions = [
+    {
+      type: "time_elapsed",
+      threshold: timeElapsedSeconds.toString()
+    },
+    {
+      type: "amount_spent_usd",
+      threshold: usdcMinorToUsdString(limits.monthlyLimitUsdcMinor)
+    }
+  ];
+  const executionPlan = [
+    "# Summary",
+    userIntent,
+    "# Operations",
+    `- Monitor the user's internal credit balance for ${walletAddress}.`,
+    `- When the balance is low, call ${contractAddress} on ${chain.name} to buy credits with Base Sepolia USDC.`,
+    "- Wait for CAW transaction submission and chain settlement before crediting the account.",
+    "# Risk Controls",
+    `- Allowed chain: ${chain.name} (${coboChainId}).`,
+    `- Allowed targets: CreditsPayment ${contractAddress} and USDC ${chain.usdcAddress}.`,
+    `- Product-side single top-up limit: ${usdcMinorToUsdString(limits.singleLimitUsdcMinor)} USDC.`,
+    `- Product-side daily limit: ${usdcMinorToUsdString(limits.dailyLimitUsdcMinor)} USDC.`,
+    `- Pact ends after ${limits.validDays} days or ${usdcMinorToUsdString(
+      limits.monthlyLimitUsdcMinor
+    )} USD of spend.`
+  ].join("\n\n");
+
+  return {
+    preview: {
+      intent: `Agent credits auto top-up on ${chain.name}`,
+      originalIntent: userIntent,
+      executionPlan,
+      policies,
+      completionConditions,
+      limits
+    }
   };
 }
 
@@ -333,9 +447,26 @@ export async function executeCreditsTopup(input: {
   const existingPending = await repository.findPendingTopupOrder(userId);
 
   if (existingPending) {
+    if (isStalePolicyPendingOrder(existingPending)) {
+      existingPending.status = "failed";
+      existingPending.failureReason = "stale_pending_policy_order";
+      existingPending.updatedAt = repository.nowIso();
+      await repository.updateTopupOrder(existingPending);
+    } else {
+      return {
+        status: "pending" as const,
+        order: existingPending,
+        snapshot: await repository.snapshotForUser(userId)
+      };
+    }
+  }
+
+  const freshPending = await repository.findPendingTopupOrder(userId);
+
+  if (freshPending) {
     return {
       status: "pending" as const,
-      order: existingPending,
+      order: freshPending,
       snapshot: await repository.snapshotForUser(userId)
     };
   }
@@ -385,6 +516,12 @@ export async function executeCreditsTopup(input: {
     onchainOrderId: order.onchainOrderId,
     amountUsdcMinor,
     credits
+  }).catch(async (error: unknown) => {
+    order.status = "failed";
+    order.failureReason = error instanceof Error ? error.message : "caw_execution_failed";
+    order.updatedAt = repository.nowIso();
+    await repository.updateTopupOrder(order);
+    throw error;
   });
 
   await recordAuthorizationSpend(policy.authorization, amountUsdcMinor);
@@ -560,6 +697,23 @@ function refreshAuthorizationWindows(authorization: CawAuthorization) {
 
 function estimateAgentCredits(prompt: string) {
   return Math.min(5000, Math.max(750, Math.ceil(prompt.length * 10) + 650));
+}
+
+function usdcMinorToUsdString(amountUsdcMinor: number) {
+  return (amountUsdcMinor / 1_000_000).toFixed(6).replace(/0+$/, "").replace(/\.$/, "");
+}
+
+function isStalePolicyPendingOrder(order: { status: string; createdAt: string }) {
+  if (order.status !== "pending_policy") {
+    return false;
+  }
+
+  const createdAt = Date.parse(order.createdAt);
+  if (Number.isNaN(createdAt)) {
+    return false;
+  }
+
+  return Date.now() - createdAt > 30 * 1000;
 }
 
 export const pricing = {

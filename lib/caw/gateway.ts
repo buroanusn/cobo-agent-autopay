@@ -2,6 +2,8 @@ import { getConfiguredCawChainId, getConfiguredChain } from "@/lib/domain/consta
 import { Configuration, FaucetApi, PactsApi, TransactionsApi, WalletsApi } from "@cobo/agentic-wallet";
 import { encodeFunctionData } from "viem";
 
+type PactSubmitSpec = NonNullable<Parameters<PactsApi["submitPact"]>[0]["spec"]>;
+
 export type CreatePactInput = {
   userId: string;
   walletAddress: string;
@@ -11,6 +13,11 @@ export type CreatePactInput = {
   dailyLimitUsdcMinor: number;
   monthlyLimitUsdcMinor: number;
   expiresAt: string;
+  pactIntent: string;
+  originalIntent: string;
+  executionPlan: string;
+  policies: unknown[];
+  completionConditions: unknown[];
 };
 
 export type ExecuteCreditsPurchaseInput = {
@@ -176,57 +183,16 @@ class HttpCawGateway implements CawGateway {
   }
 
   async createPact(input: CreatePactInput) {
-    const chain = getConfiguredChain();
-    const coboChainId = getConfiguredCawChainId();
-    const contractAddress = requiredInput(input.contractAddress, "PAYMENT_CONTRACT_ADDRESS");
+    requiredInput(input.contractAddress, "PAYMENT_CONTRACT_ADDRESS");
     const response = await this.pactsApi().submitPact({
       wallet_id: this.walletId,
       name: "Agent credits auto top-up",
-      intent:
-        "Allow the agent to top up internal credits by calling the configured CreditsPayment contract on testnet within strict spending limits.",
-      original_intent: "CAW small auto-payment demo for agent token top-ups.",
+      intent: input.pactIntent,
+      original_intent: input.originalIntent,
       spec: {
-        policies: [
-          {
-            name: "credits-payment-contract-call",
-            type: "contract_call",
-            rules: {
-              effect: "allow",
-              when: {
-                chain_in: [coboChainId],
-                contract_addr_in: [contractAddress],
-                function_in: ["buyCredits(bytes32,address,uint256)"]
-              },
-              deny_if: {
-                amount_usd_gt: usdcMinorToUsdString(input.singleLimitUsdcMinor)
-              }
-            },
-            priority: 100,
-            is_active: true
-          }
-        ],
-        completion_conditions: [
-          {
-            type: "time_elapsed",
-            threshold: Math.max(
-              1,
-              Math.ceil((Date.parse(input.expiresAt) - Date.now()) / 1000)
-            ).toString()
-          },
-          {
-            type: "amount_spent_usd",
-            threshold: usdcMinorToUsdString(input.monthlyLimitUsdcMinor)
-          }
-        ],
-        execution_plan: [
-          "# Summary",
-          "The agent may initiate small testnet USDC credit top-ups without manual approval.",
-          "# Contract Operations",
-          `Call ${contractAddress} on ${chain.name} using buyCredits(bytes32,address,uint256).`,
-          "# Risk Controls",
-          `Single transaction limit: ${usdcMinorToUsdString(input.singleLimitUsdcMinor)} USDC.`,
-          `Monthly completion amount: ${usdcMinorToUsdString(input.monthlyLimitUsdcMinor)} USDC.`
-        ].join("\n\n")
+        policies: input.policies as PactSubmitSpec["policies"],
+        completion_conditions: input.completionConditions as PactSubmitSpec["completion_conditions"],
+        execution_plan: input.executionPlan
       }
     });
 
@@ -480,10 +446,6 @@ function requiredInput(value: string | undefined, name: string) {
 
 function getDefaultFaucetTokenId() {
   return process.env.CAW_FAUCET_TOKEN_ID || (process.env.CHAIN_ENV === "base-mainnet" ? "BASE_ETH_USDC" : "BASE_SEPOLIA_USDC");
-}
-
-function usdcMinorToUsdString(amountUsdcMinor: number) {
-  return (amountUsdcMinor / 1_000_000).toFixed(6).replace(/0+$/, "").replace(/\.$/, "");
 }
 
 function normalizePactStatus(status: string | undefined): CawPactStatus["status"] {
