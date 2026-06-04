@@ -5,11 +5,26 @@ import type { DashboardSnapshot } from "@/lib/domain/types";
 import { formatUsdc } from "@/lib/domain/money";
 
 type ApiResult = {
+  ok?: boolean;
   snapshot?: DashboardSnapshot;
   error?: string;
   status?: string;
   reason?: string;
   note?: string;
+  usageEvent?: {
+    estimatedCredits: number;
+    creditsCharged: number;
+    status: string;
+  };
+  topup?: {
+    status: string;
+    reason?: string;
+    order?: {
+      orderId: string;
+      status: string;
+      reason: string;
+    };
+  };
   trace?: Array<{
     step: string;
     status: number;
@@ -61,9 +76,9 @@ type Lang = "zh" | "en";
 const copy = {
   zh: {
     language: "English",
-    title: "CAW 小额免密支付 Demo",
+    title: "Agent 自动小额支付演示",
     subtitle:
-      "Agent 自动监控 Token 余额；小额充值在 CAW Pact 和用户 Guardrails 范围内自动执行，大额或高风险请求转为人工审批。",
+      "演示 AI Agent 如何在用户授权范围内，用 CAW 钱包完成小额支付和 x402 付费资源访问。",
     ready: "余额充足",
     belowThreshold: "低于阈值",
     credits: "Token 余额",
@@ -116,6 +131,9 @@ const copy = {
     ledger: "账本",
     balanceAfter: "余额",
     runOk: "Agent 已运行；如果余额低于阈值，系统会尝试自动充值。",
+    runFailed: "Agent 未运行：积分不足。",
+    runPending: "已有充值订单待处理，请先确认订单状态。",
+    running: "运行中...",
     topupOk: "充值",
     connectOk: "CAW 钱包已连接。",
     authorizeOk: "Pact 已启用。mock 模式会立即激活；真实模式需用户在 App 内审批。",
@@ -144,6 +162,7 @@ const copy = {
     notReady: "未就绪",
     noMissing: "关键配置已齐",
     statusHint: "这里只展示脱敏状态，API key 和私钥不会返回到浏览器。",
+    presentationHint: "演示重点：钱包已配对；还缺真实 Pact 和 Base Sepolia 测试币。",
     done: "完成。"
   },
   en: {
@@ -203,6 +222,9 @@ const copy = {
     ledger: "Ledger",
     balanceAfter: "Balance after",
     runOk: "Agent run finished. If credits crossed the threshold, auto top-up was attempted.",
+    runFailed: "Agent did not run: insufficient credits.",
+    runPending: "A top-up order is already pending. Check the order status first.",
+    running: "Running...",
     topupOk: "Top-up",
     connectOk: "CAW wallet connected.",
     authorizeOk: "Pact is enabled. Mock mode activates immediately; real mode requires app approval.",
@@ -231,6 +253,7 @@ const copy = {
     notReady: "Not ready",
     noMissing: "Core configuration is ready",
     statusHint: "Only redacted status is shown here. API keys and private keys never reach the browser.",
+    presentationHint: "Demo focus: wallet is paired; real Pact and Base Sepolia test funds are still missing.",
     done: "Done."
   }
 } as const;
@@ -318,11 +341,11 @@ export function DashboardClient({
           <p className="subtitle">{t.subtitle}</p>
         </div>
         <div className="top-actions">
-          <button className="secondary compact" onClick={() => setLang(lang === "zh" ? "en" : "zh")}>
+          <button className="secondary compact demo-hidden" onClick={() => setLang(lang === "zh" ? "en" : "zh")}>
             {t.language}
           </button>
           <span className="pill">
-            {snapshot.network.name} · {snapshot.pricing.creditsPerUsdc} credits / USDC
+            {snapshot.network.name} · {snapshot.pricing.creditsPerUsdc} 积分 / USDC
           </span>
         </div>
       </header>
@@ -339,8 +362,8 @@ export function DashboardClient({
           </div>
           <div className="metric">{account.balanceCredits.toLocaleString()}</div>
           <div className="metric-label">
-            {t.threshold}: {account.lowBalanceThresholdCredits.toLocaleString()} credits ·
-            {t.autoTopup}: {account.autoTopupCredits.toLocaleString()} credits
+            {t.threshold}: {account.lowBalanceThresholdCredits.toLocaleString()} 积分 ·
+            {t.autoTopup}: {account.autoTopupCredits.toLocaleString()} 积分
           </div>
 
           <div className="actions">
@@ -353,7 +376,7 @@ export function DashboardClient({
               }
               disabled={busyAction === "run"}
             >
-              {t.runAgent}
+              {busyAction === "run" ? t.running : t.runAgent}
             </button>
             <button
               className="secondary"
@@ -460,9 +483,9 @@ export function DashboardClient({
           </div>
           <div className="status-grid">
             <StatusItem label={t.environment} value={cawStatus?.runtime.environment ?? "-"} />
-            <StatusItem label={t.mode} value={cawStatus?.runtime.mode ?? "-"} />
+            <StatusItem label={t.mode} value={formatMode(cawStatus?.runtime.mode)} />
             <StatusItem
-              label="API"
+              label="接口配置"
               value={cawStatus?.runtime.apiConfigured ? t.configured : t.missing}
               active={Boolean(cawStatus?.runtime.apiConfigured)}
             />
@@ -477,14 +500,14 @@ export function DashboardClient({
               active={Boolean(cawStatus?.runtime.walletPaired)}
             />
             <StatusItem
-              label="Pact"
+              label="Pact 授权"
               value={cawStatus?.app.authorizationStatus ?? "-"}
               active={Boolean(cawStatus?.app.activeAuthorization)}
             />
           </div>
           <div className="stack" style={{ marginTop: 14 }}>
             <div className="row">
-              <span>Wallet ID</span>
+              <span>钱包 ID</span>
               <span className="value">{cawStatus?.runtime.walletId ?? "-"}</span>
             </div>
             <div className="row">
@@ -506,14 +529,17 @@ export function DashboardClient({
             <div className="row">
               <span>{t.missing}</span>
               <span className="value">
-                {cawStatus?.missing.length ? cawStatus.missing.join(", ") : t.noMissing}
+                {cawStatus?.missing.length
+                  ? cawStatus.missing.map(formatMissingItem).join("，")
+                  : t.noMissing}
               </span>
             </div>
           </div>
           <p className="metric-label">{cawStatus?.runtime.error ?? t.statusHint}</p>
+          <p className="metric-label">{t.presentationHint}</p>
         </div>
 
-        <div className="panel span-4">
+        <div className="panel span-4 demo-hidden">
           <div className="panel-title">
             <h2>{t.onboarding}</h2>
             <span className={`status ${snapshot.pairingSession ? "active" : "blocked"}`}>
@@ -539,7 +565,7 @@ export function DashboardClient({
           </div>
         </div>
 
-        <div className="panel span-4">
+        <div className="panel span-4 demo-hidden">
           <div className="panel-title">
             <h2>{t.guardrails}</h2>
             <span className="status active">{guardrails.generatedBy}</span>
@@ -579,7 +605,7 @@ export function DashboardClient({
           </div>
         </div>
 
-        <div className="panel span-4">
+        <div className="panel span-4 demo-hidden">
           <div className="panel-title">
             <h2>{t.stats}</h2>
           </div>
@@ -614,7 +640,7 @@ export function DashboardClient({
         <div className="panel span-12">
           <div className="panel-title">
             <h2>{t.x402Panel}</h2>
-            <span className="status active">HTTP 402 · CAW mock</span>
+            <span className="status active">HTTP 402 · CAW 模拟</span>
           </div>
           <p className="metric-label">{t.x402Hint}</p>
           <div className="actions">
@@ -652,7 +678,7 @@ export function DashboardClient({
           )}
         </div>
 
-        <div className="panel span-6">
+        <div className="panel span-6 demo-hidden">
           <div className="panel-title">
             <h2>{t.pactManagement}</h2>
             <span className={`status ${authorization?.status ?? "blocked"}`}>
@@ -689,7 +715,7 @@ export function DashboardClient({
           )}
         </div>
 
-        <div className="panel span-6">
+        <div className="panel span-6 demo-hidden">
           <div className="panel-title">
             <h2>{t.pendingApprovals}</h2>
             <span className={`status ${snapshot.pendingApprovals.length ? "blocked" : "active"}`}>
@@ -779,9 +805,46 @@ function StatusItem({
   );
 }
 
+function formatMode(mode: CawStatusResult["runtime"]["mode"] | undefined) {
+  if (mode === "http") {
+    return "真实 CAW";
+  }
+  if (mode === "mock") {
+    return "模拟模式";
+  }
+  return "-";
+}
+
+function formatMissingItem(item: string) {
+  const translations: Record<string, string> = {
+    "CAW API URL/API key": "CAW 接口配置",
+    "CAW wallet id": "CAW 钱包 ID",
+    "CAW App pairing": "手机 App 配对",
+    "payment contract address": "支付合约地址",
+    "treasury address": "收款地址",
+    "connected CAW wallet address": "连接 CAW 钱包地址",
+    "active Pact authorization": "有效 Pact 授权",
+    "connected wallet does not match CAW runtime wallet": "页面连接的钱包和 CAW 钱包不一致",
+    "real CAW Pact authorization": "真实 CAW Pact 授权"
+  };
+
+  return translations[item] ?? item;
+}
+
 function statusMessage(action: string, result: ApiResult, lang: Lang) {
   const t = copy[lang];
   if (action === "run") {
+    if (result.ok === false) {
+      if (result.topup?.status === "pending") {
+        return `${t.runFailed} ${t.runPending} ${result.topup.order?.orderId ?? ""}`.trim();
+      }
+      if (result.topup?.status === "blocked") {
+        return `${t.runFailed} ${result.topup.reason ?? result.topup.order?.status ?? ""}`.trim();
+      }
+      return `${t.runFailed} 需要 ${result.usageEvent?.estimatedCredits ?? "-"} credits，实际扣费 ${
+        result.usageEvent?.creditsCharged ?? 0
+      }。`;
+    }
     return t.runOk;
   }
 

@@ -175,6 +175,10 @@ button.compact {
   margin-top: 16px;
 }
 
+.demo-hidden {
+  display: none !important;
+}
+
 .status-grid {
   display: grid;
   grid-template-columns: repeat(6, 1fr);
