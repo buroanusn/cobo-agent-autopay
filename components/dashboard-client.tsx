@@ -26,20 +26,6 @@ type ApiResult = {
       reason: string;
     };
   };
-  trace?: Array<{
-    step: string;
-    status: number;
-    recordId?: string;
-    note: string;
-  }>;
-  paymentCredential?: {
-    credentialId: string;
-    orderId: string;
-  };
-  resource?: {
-    title: string;
-    content: string;
-  };
 };
 
 type CawPactPreview = {
@@ -94,8 +80,7 @@ const copy = {
   zh: {
     language: "English",
     title: "Agent 自动小额支付演示",
-    subtitle:
-      "演示 AI Agent 如何在用户授权范围内，用 CAW 钱包完成小额支付和 x402 付费资源访问。",
+    subtitle: "演示 AI Agent 如何在用户授权范围内，用真实 CAW 钱包完成小额支付。",
     ready: "余额充足",
     belowThreshold: "低于阈值",
     credits: "Token 余额",
@@ -176,14 +161,6 @@ const copy = {
     faucetOk: "测试币请求已提交。真实模式会调用 CAW Faucet；mock 模式只返回模拟结果。",
     pairOk: "配对码已生成。请在 Cobo Agentic Wallet App 内完成绑定。",
     guardrailsOk: "Guardrails 推荐已生成。最终设置需在 Cobo App 内确认。",
-    x402Demo: "运行 x402 付费资源",
-    x402Panel: "x402 + CAW 演示",
-    x402Hint:
-      "模拟收费资源先返回 HTTP 402；后端解析付款要求并调用 CAW mock 支付，随后带付款凭证重试并获取资源。",
-    x402Ok: "x402 资源已返回，CAW 付款记录已写入订单和账本。",
-    x402Credential: "付款凭证",
-    x402Resource: "资源",
-    x402Trace: "流程记录",
     integrationStatus: "真实 CAW 接入状态",
     environment: "环境",
     mode: "模式",
@@ -285,14 +262,6 @@ const copy = {
     faucetOk: "Test token request submitted. Real mode calls CAW Faucet; mock mode returns a simulated result.",
     pairOk: "Pairing code generated. Complete pairing in Cobo Agentic Wallet App.",
     guardrailsOk: "Guardrails recommendation generated. Final settings must be confirmed in Cobo App.",
-    x402Demo: "Run x402 Paid Resource",
-    x402Panel: "x402 + CAW Demo",
-    x402Hint:
-      "Simulates a paid resource returning HTTP 402; the backend parses payment requirements, pays through CAW mock, retries with a credential, and receives the resource.",
-    x402Ok: "x402 resource returned; CAW payment records were written to orders and ledger.",
-    x402Credential: "Payment credential",
-    x402Resource: "Resource",
-    x402Trace: "Trace",
     integrationStatus: "Real CAW Integration Status",
     environment: "Environment",
     mode: "Mode",
@@ -320,7 +289,6 @@ export function DashboardClient({
   const [busyAction, setBusyAction] = useState<string>();
   const [message, setMessage] = useState<string>();
   const [error, setError] = useState<string>();
-  const [x402Result, setX402Result] = useState<ApiResult>();
   const [cawStatus, setCawStatus] = useState<CawStatusResult>();
   const [pactPreview, setPactPreview] = useState<CawPactPreview>();
   const [lang, setLang] = useState<Lang>("zh");
@@ -371,10 +339,6 @@ export function DashboardClient({
 
       if (result.snapshot) {
         setSnapshot(result.snapshot);
-      }
-
-      if (action === "x402") {
-        setX402Result(result);
       }
 
       if (action === "pact-preview" && result.preview) {
@@ -880,47 +844,6 @@ export function DashboardClient({
           <div className={`notice span-12 ${error ? "error" : ""}`}>{error ?? message}</div>
         )}
 
-        <div className="panel span-12">
-          <div className="panel-title">
-            <h2>{t.x402Panel}</h2>
-            <span className="status active">HTTP 402 · CAW 模拟</span>
-          </div>
-          <p className="metric-label">{t.x402Hint}</p>
-          <div className="actions">
-            <button
-              onClick={() => callAction("x402", "/api/x402/resource")}
-              disabled={busyAction === "x402"}
-            >
-              {t.x402Demo}
-            </button>
-          </div>
-          {x402Result && (
-            <div className="x402-grid">
-              <div className="event">
-                <strong>{t.x402Credential}</strong>
-                <span>
-                  {x402Result.paymentCredential?.credentialId ?? "-"} ·{" "}
-                  {x402Result.paymentCredential?.orderId ?? "-"}
-                </span>
-              </div>
-              <div className="event">
-                <strong>{t.x402Resource}</strong>
-                <span>
-                  {x402Result.resource?.title ?? "-"} · {x402Result.resource?.content ?? "-"}
-                </span>
-              </div>
-              <div className="event x402-trace">
-                <strong>{t.x402Trace}</strong>
-                <span>
-                  {x402Result.trace
-                    ?.map((step) => `${step.step}(${step.status})${step.recordId ? `:${step.recordId}` : ""}`)
-                    .join(" -> ") ?? "-"}
-                </span>
-              </div>
-            </div>
-          )}
-        </div>
-
         <div className="panel span-6 demo-hidden">
           <div className="panel-title">
             <h2>{t.pactManagement}</h2>
@@ -1188,9 +1111,6 @@ function formatTime(value: string) {
 }
 
 function paymentRecordTitle(order: TopupOrder, lang: Lang) {
-  if (order.reason === "x402_resource") {
-    return lang === "zh" ? "x402 付费资源" : "x402 paid resource";
-  }
   if (order.reason === "low_balance") {
     return lang === "zh" ? "低余额自动充值" : "Low-balance top-up";
   }
@@ -1289,10 +1209,6 @@ function statusMessage(action: string, result: ApiResult, lang: Lang) {
 
   if (action === "guardrails") {
     return result.note ?? t.guardrailsOk;
-  }
-
-  if (action === "x402") {
-    return result.resource ? t.x402Ok : result.trace?.at(-1)?.note ?? t.done;
   }
 
   return t.done;

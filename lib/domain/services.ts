@@ -12,7 +12,7 @@ import { creditsToUsdcMinor } from "@/lib/domain/money";
 import type { CawAuthorization } from "@/lib/domain/types";
 import { getCreditRepository } from "@/lib/store";
 
-type AutoTopupReason = "low_balance" | "insufficient_balance" | "manual" | "x402_resource";
+type AutoTopupReason = "low_balance" | "insufficient_balance" | "manual";
 
 export type CawPactPreview = {
   intent: string;

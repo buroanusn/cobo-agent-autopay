@@ -9,7 +9,7 @@ testnet flow has been verified on Base Sepolia with the minimum spend path.
 
 Completed:
 
-- Next.js dashboard and API routes for agent credits, CAW authorization, x402 demo, and settlement.
+- Next.js dashboard and API routes for agent credits, CAW authorization, real payment, and settlement.
 - Mock CAW mode remains available for offline demos.
 - Real CAW HTTP mode is configured locally.
 - CAW wallet is active and paired in the Cobo Agentic Wallet App.
@@ -19,7 +19,8 @@ Completed:
   - Backend validation constrains final policy to the configured chain, USDC token, payment contract, and spend limits.
   - CAW still receives structured PactSpec through the SDK.
 - Dashboard payment history and credits ledger were simplified for demos.
-- Real 1 USDC x402/payment verification succeeded.
+- Real 1 USDC CAW payment verification succeeded.
+- The x402 mock demo panel and `/api/x402/resource` route were removed for the real-environment testing stage.
 
 Latest relevant commits:
 
@@ -103,7 +104,7 @@ Amount: 1 USDC
 Tx: 0x6e9e17b60fbe18ac0deb3e886b6af52803eacd89758ddb2b941a72a214136655
 ```
 
-x402/payment verification:
+1 USDC payment verification:
 
 ```text
 Order ID: ord_789738713c3844b8
@@ -148,7 +149,7 @@ Dashboard:
 - Submit Pact to CAW.
 - Refresh Pact after Cobo App approval.
 - Show redacted CAW integration status.
-- Run x402 demo.
+- Run real CAW payment through the credits payment flow.
 - Show simplified payment records and credits ledger.
 
 Backend:
@@ -182,9 +183,9 @@ Backend:
    - The drafter supports optional OpenAI Responses API usage when `PACT_DRAFTER_MODE=llm`.
    - Need production-grade LLM prompt evaluation and stricter ambiguity handling before relying on arbitrary user text.
 
-5. **x402 is still a mock protocol wrapper**
-   - Current route models the x402 sequence and uses CAW-backed payment, but does not integrate with a real x402 provider.
-   - Decide whether to integrate Bank of AI x402 or build a CAW-backed x402 adapter.
+5. **x402 mock demo has been removed**
+   - Do not use the old x402 route for current testing.
+   - If x402 becomes a product requirement again, add it as a real provider integration instead of a mock panel.
 
 6. **The 1 USDC test Pact is exhausted**
    - Do not rerun real payments under the same Pact.
