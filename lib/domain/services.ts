@@ -11,6 +11,8 @@ import {
 import { creditsToUsdcMinor } from "@/lib/domain/money";
 import type { CawAuthorization } from "@/lib/domain/types";
 import { getCreditRepository } from "@/lib/store";
+import { createPublicClient, formatUnits, getAddress, http } from "viem";
+import { base, baseSepolia } from "viem/chains";
 
 type AutoTopupReason = "low_balance" | "insufficient_balance" | "manual";
 
@@ -41,6 +43,10 @@ export async function getCawIntegrationStatus(userId = DEMO_USER_ID) {
   ]);
   const activeAuthorization = snapshot.authorization?.status === "active";
   const missing = [...runtime.missing];
+  const readinessMissing: string[] = [];
+  const requiredUsdcMinor = creditsToUsdcMinor(snapshot.account.autoTopupCredits);
+  const remainingUsdcMinor = snapshot.pactDetails?.remainingUsdcMinor ?? 0;
+  const expiresAt = snapshot.authorization?.expiresAt;
 
   if (!snapshot.user.cawWalletAddress) {
     missing.push("connected CAW wallet address");
@@ -59,6 +65,42 @@ export async function getCawIntegrationStatus(userId = DEMO_USER_ID) {
   if (runtime.mode === "http" && snapshot.authorization?.pactId.startsWith("mock_")) {
     missing.push("real CAW Pact authorization");
   }
+  if (activeAuthorization && expiresAt && Date.parse(expiresAt) <= Date.now()) {
+    readinessMissing.push("Pact authorization expired");
+  }
+  if (activeAuthorization && remainingUsdcMinor < requiredUsdcMinor) {
+    readinessMissing.push("Pact remaining spend below next payment");
+  }
+
+  const onchainReadiness =
+    runtime.mode === "http" &&
+    runtime.walletAddress &&
+    snapshot.user.cawWalletAddress &&
+    process.env.PAYMENT_CONTRACT_ADDRESS
+      ? await getOnchainSpendReadiness({
+          walletAddress: snapshot.user.cawWalletAddress,
+          paymentContractAddress: process.env.PAYMENT_CONTRACT_ADDRESS,
+          requiredUsdcMinor
+        })
+      : undefined;
+
+  if (onchainReadiness?.error) {
+    readinessMissing.push("on-chain readiness check unavailable");
+  }
+  if (onchainReadiness && !onchainReadiness.error) {
+    if ((onchainReadiness.allowanceUsdcMinor ?? 0) < requiredUsdcMinor) {
+      readinessMissing.push("USDC allowance below next payment");
+    }
+    if ((onchainReadiness.walletUsdcMinor ?? 0) < requiredUsdcMinor) {
+      readinessMissing.push("USDC balance below next payment");
+    }
+    if ((onchainReadiness.gasEthWei ?? 0n) <= 0n) {
+      readinessMissing.push("Base Sepolia ETH gas balance missing");
+    }
+  }
+
+  const cawConfigured = missing.length === 0;
+  const paymentMissing = [...missing, ...readinessMissing];
 
   return {
     runtime,
@@ -68,9 +110,87 @@ export async function getCawIntegrationStatus(userId = DEMO_USER_ID) {
       pactId: snapshot.authorization?.pactId,
       activeAuthorization
     },
-    readyForRealPayment: missing.length === 0,
-    missing
+    spendReadiness: {
+      requiredUsdcMinor,
+      remainingUsdcMinor,
+      pactExpiresAt: expiresAt,
+      allowanceUsdcMinor: onchainReadiness?.allowanceUsdcMinor,
+      walletUsdcMinor: onchainReadiness?.walletUsdcMinor,
+      gasEth: onchainReadiness?.gasEth,
+      error: onchainReadiness?.error
+    },
+    cawConfigured,
+    readyForRealPayment: paymentMissing.length === 0,
+    missing: paymentMissing,
+    configurationMissing: missing,
+    paymentMissing: readinessMissing
   };
+}
+
+async function getOnchainSpendReadiness(input: {
+  walletAddress: string;
+  paymentContractAddress: string;
+  requiredUsdcMinor: number;
+}) {
+  try {
+    const chainConfig = getConfiguredChain();
+    const viemChain = process.env.CHAIN_ENV === "base-mainnet" ? base : baseSepolia;
+    const rpcUrl =
+      process.env.BASE_RPC_URL ||
+      (process.env.CHAIN_ENV === "base-mainnet" ? "https://mainnet.base.org" : "https://sepolia.base.org");
+    const client = createPublicClient({
+      chain: viemChain,
+      transport: http(rpcUrl)
+    });
+    const erc20Abi = [
+      {
+        type: "function",
+        name: "balanceOf",
+        stateMutability: "view",
+        inputs: [{ name: "account", type: "address" }],
+        outputs: [{ type: "uint256" }]
+      },
+      {
+        type: "function",
+        name: "allowance",
+        stateMutability: "view",
+        inputs: [
+          { name: "owner", type: "address" },
+          { name: "spender", type: "address" }
+        ],
+        outputs: [{ type: "uint256" }]
+      }
+    ] as const;
+    const walletAddress = getAddress(input.walletAddress);
+    const paymentContractAddress = getAddress(input.paymentContractAddress);
+    const usdcAddress = getAddress(chainConfig.usdcAddress);
+    const [gasEthWei, walletUsdc, allowanceUsdc] = await Promise.all([
+      client.getBalance({ address: walletAddress }),
+      client.readContract({
+        address: usdcAddress,
+        abi: erc20Abi,
+        functionName: "balanceOf",
+        args: [walletAddress]
+      }),
+      client.readContract({
+        address: usdcAddress,
+        abi: erc20Abi,
+        functionName: "allowance",
+        args: [walletAddress, paymentContractAddress]
+      })
+    ]);
+
+    return {
+      gasEthWei,
+      gasEth: formatUnits(gasEthWei, 18),
+      walletUsdcMinor: Number(walletUsdc),
+      allowanceUsdcMinor: Number(allowanceUsdc)
+    };
+  } catch (error) {
+    return {
+      error: error instanceof Error ? error.message : "unknown on-chain readiness error"
+    };
+  }
 }
 
 export async function createPairingCode(input: { userId?: string }) {

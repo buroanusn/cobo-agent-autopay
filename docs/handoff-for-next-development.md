@@ -131,11 +131,9 @@ Feature-complete / production-ready: no
 
 Important nuance:
 
-- `GET /api/wallet/caw/status` currently reports `readyForRealPayment=true`
-  because CAW is configured, the wallet is paired, and the Pact status is
-  `active`.
-- That is not sufficient for real payment readiness. The active 1 USDC Pact is
-  already exhausted:
+- `GET /api/wallet/caw/status` now separates "CAW configured" from "ready to
+  spend now".
+- The active 1 USDC Pact is exhausted:
 
 ```text
 singleLimitUsdcMinor: 1000000
@@ -146,9 +144,18 @@ spentMonthUsdcMinor: 1000000
 remainingUsdcMinor: 0
 ```
 
-Until this is fixed, the status panel can say "ready" while a new payment would
-be blocked by product-side policy. Treat the current readiness indicator as
-"CAW integration configured", not "can spend now".
+Current status response correctly reports:
+
+```text
+cawConfigured: true
+readyForRealPayment: false
+missing:
+  - Pact remaining spend below next payment
+  - USDC allowance below next payment
+spendReadiness.requiredUsdcMinor: 5000000
+spendReadiness.remainingUsdcMinor: 0
+spendReadiness.allowanceUsdcMinor: 0
+```
 
 ## Important Fixes From Verification
 
@@ -171,6 +178,17 @@ POST /api/webhooks/chain/credits-payment
 For the verified test, settlement was manually replayed after confirming CAW tx
 success because no automatic chain-event listener is running locally.
 
+Real payment readiness now checks:
+
+- CAW runtime configuration.
+- Wallet pairing and wallet address match.
+- Active real Pact.
+- Pact expiry.
+- Product-side remaining spend for the next default payment.
+- USDC allowance for the payment contract.
+- CAW wallet USDC balance.
+- CAW wallet Base Sepolia ETH gas balance.
+
 ## What Works Now
 
 Dashboard:
@@ -179,7 +197,7 @@ Dashboard:
 - Generate Pact preview from natural-language intent.
 - Submit Pact to CAW.
 - Refresh Pact after Cobo App approval.
-- Show redacted CAW integration status.
+- Show redacted CAW integration status and spend-readiness details.
 - Run real CAW payment through the credits payment flow.
 - Show simplified payment records and credits ledger.
 
@@ -193,31 +211,22 @@ Backend:
 
 ## Known Gaps
 
-1. **Readiness check is too optimistic**
-   - `readyForRealPayment` must include:
-     - Pact status is active.
-     - Pact has not expired.
-     - Product-side remaining spend is greater than the requested payment.
-     - USDC allowance is enough for the requested payment.
-     - CAW wallet still has enough USDC and Base Sepolia ETH.
-   - Current UI can show ready even when `remainingUsdcMinor = 0`.
-
-2. **Default top-up amount does not match the minimal Pact**
+1. **Default top-up amount does not match the minimal Pact**
    - The default Agent auto top-up is still 5 USDC.
    - The verified Pact is only 1 USDC and is now exhausted.
    - A real test click can create failed orders instead of a clean demo.
    - Add a minimal verification mode or dynamically clamp top-up amount to the active Pact.
 
-3. **Automatic chain listener is missing**
+2. **Automatic chain listener is missing**
    - Current settlement route works, but local verification required manually posting the event.
    - Add a listener for `CreditsPurchased` on `CreditsPayment`.
    - Listener should call `POST /api/webhooks/chain/credits-payment` with tx hash, order id, amount, and deterministic event id.
 
-4. **Payment status polling is incomplete**
+3. **Payment status polling is incomplete**
    - `executeCreditsPurchase` records CAW submission, but does not poll CAW until final `Success` / `Failed`.
    - Add a payment-status refresh job or endpoint to update `caw_submitted` orders.
 
-5. **USDC approval is still manual**
+4. **USDC approval is still manual**
    - The app can execute the payment after allowance exists.
    - Add an explicit approval flow:
      - Check current allowance.
@@ -225,62 +234,55 @@ Backend:
      - Execute `approve(spender, amount)` with minimal amount.
      - Display allowance status in the dashboard.
 
-6. **Pact generation is still deterministic by default**
+5. **Pact generation is still deterministic by default**
    - The drafter supports optional OpenAI Responses API usage when `PACT_DRAFTER_MODE=llm`.
    - Need production-grade LLM prompt evaluation and stricter ambiguity handling before relying on arbitrary user text.
 
-7. **x402 mock demo has been removed**
+6. **x402 mock demo has been removed**
    - Do not use the old x402 route for current testing.
    - If x402 becomes a product requirement again, add it as a real provider integration instead of a mock panel.
 
-8. **The 1 USDC test Pact is exhausted**
+7. **The 1 USDC test Pact is exhausted**
    - Do not rerun real payments under the same Pact.
    - For more tests, create a new minimal Pact or use mock mode.
 
-9. **Base Sepolia ETH is low**
+8. **Base Sepolia ETH is low**
    - Current wallet had `0.00015 ETH` before verification.
    - Top up Base Sepolia ETH before repeated real tests.
 
 ## Recommended Next Features
 
-1. Fix real readiness semantics.
-   - Rename or split current status into:
-     - "CAW configured"
-     - "Ready to spend now"
-   - Include Pact remaining amount, expiry, allowance, USDC balance, and gas balance.
-   - Show "Pact exhausted" when remaining amount is 0.
-
-2. Add minimal real verification mode.
+1. Add minimal real verification mode.
    - Use 1 USDC or less.
    - Disable the default 5 USDC top-up path during minimal tests.
    - Avoid creating failed orders when the active Pact cannot cover the amount.
 
-3. Add allowance panel and approval action.
+2. Add allowance panel and approval action.
    - Show current allowance.
    - Show required allowance for next test.
    - Create minimal approve transaction.
    - Avoid infinite allowance for demos.
 
-4. Add automatic on-chain event listener.
+3. Add automatic on-chain event listener.
    - Target: `CreditsPurchased(bytes32,address,uint256,uint256)`.
    - Store last processed block or use deterministic event ids.
    - Keep webhook idempotency.
 
-5. Add CAW tx status refresh endpoint.
+4. Add CAW tx status refresh endpoint.
    - Input: order id or request id.
    - Reads CAW tx status.
    - Updates order status and tx hash.
    - If success and listener has not settled yet, surface a clear "waiting for chain event" state.
 
-6. Improve Pact drafter ambiguity handling.
+5. Improve Pact drafter ambiguity handling.
    - If user intent lacks amount, chain, token, or duration, ask before submission.
    - Do not silently default for real CAW mode except in mock/demo mode.
 
-7. Add clearer audit/export view.
+6. Add clearer audit/export view.
    - Compact dashboard remains simple.
    - Add a separate detail drawer for order id, CAW tx id, chain tx hash, Pact id, and webhook event id.
 
-8. Clean old mock data for demos.
+7. Clean old mock data for demos.
    - Current database contains previous mock orders with `0xmock...` tx hashes.
    - Add a reset/demo-seed script or a filtered "real only" view.
 

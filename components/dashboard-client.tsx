@@ -70,8 +70,20 @@ type CawStatusResult = {
     pactId?: string;
     activeAuthorization: boolean;
   };
+  spendReadiness?: {
+    requiredUsdcMinor: number;
+    remainingUsdcMinor: number;
+    pactExpiresAt?: string;
+    allowanceUsdcMinor?: number;
+    walletUsdcMinor?: number;
+    gasEth?: string;
+    error?: string;
+  };
+  cawConfigured?: boolean;
   readyForRealPayment: boolean;
   missing: string[];
+  configurationMissing?: string[];
+  paymentMissing?: string[];
 };
 
 type Lang = "zh" | "en";
@@ -173,8 +185,12 @@ const copy = {
     readyForPayment: "可真实支付",
     notReady: "未就绪",
     noMissing: "关键配置已齐",
+    nextPayment: "下一笔需要",
+    pactRemaining: "Pact 剩余额度",
+    allowance: "USDC 授权",
+    gasBalance: "Gas 余额",
     statusHint: "这里只展示脱敏状态，API key 和私钥不会返回到浏览器。",
-    presentationHint: "演示重点：钱包已配对；还缺真实 Pact 和 Base Sepolia 测试币。",
+    presentationHint: "真实支付就绪需要 CAW 配置、有效 Pact、剩余额度、USDC 授权、USDC 余额和 gas 都满足。",
     done: "完成。"
   },
   en: {
@@ -274,8 +290,12 @@ const copy = {
     readyForPayment: "Ready for real payment",
     notReady: "Not ready",
     noMissing: "Core configuration is ready",
+    nextPayment: "Next payment needs",
+    pactRemaining: "Pact remaining",
+    allowance: "USDC allowance",
+    gasBalance: "Gas balance",
     statusHint: "Only redacted status is shown here. API keys and private keys never reach the browser.",
-    presentationHint: "Demo focus: wallet is paired; real Pact and Base Sepolia test funds are still missing.",
+    presentationHint: "Real payment requires CAW config, active Pact, remaining spend, allowance, USDC balance, and gas.",
     done: "Done."
   }
 } as const;
@@ -734,6 +754,38 @@ export function DashboardClient({
               </span>
             </div>
             <div className="row">
+              <span>{t.nextPayment}</span>
+              <span className="value">
+                {cawStatus?.spendReadiness
+                  ? `${formatUsdc(cawStatus.spendReadiness.requiredUsdcMinor)} USDC`
+                  : "-"}
+              </span>
+            </div>
+            <div className="row">
+              <span>{t.pactRemaining}</span>
+              <span className="value">
+                {cawStatus?.spendReadiness
+                  ? `${formatUsdc(cawStatus.spendReadiness.remainingUsdcMinor)} USDC`
+                  : "-"}
+              </span>
+            </div>
+            <div className="row">
+              <span>{t.allowance}</span>
+              <span className="value">
+                {cawStatus?.spendReadiness?.allowanceUsdcMinor !== undefined
+                  ? `${formatUsdc(cawStatus.spendReadiness.allowanceUsdcMinor)} USDC`
+                  : "-"}
+              </span>
+            </div>
+            <div className="row">
+              <span>{t.gasBalance}</span>
+              <span className="value">
+                {cawStatus?.spendReadiness?.gasEth
+                  ? `${formatEth(cawStatus.spendReadiness.gasEth)} ETH`
+                  : "-"}
+              </span>
+            </div>
+            <div className="row">
               <span>{t.missing}</span>
               <span className="value">
                 {missingItems.length
@@ -1054,6 +1106,16 @@ function formatMode(mode: CawStatusResult["runtime"]["mode"] | undefined) {
   return "-";
 }
 
+function formatEth(value: string) {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) {
+    return value;
+  }
+  return parsed.toLocaleString("en-US", {
+    maximumFractionDigits: 8
+  });
+}
+
 function formatMissingItem(item: string) {
   const translations: Record<string, string> = {
     "CAW API URL/API key": "CAW 接口配置",
@@ -1064,7 +1126,13 @@ function formatMissingItem(item: string) {
     "connected CAW wallet address": "连接 CAW 钱包地址",
     "active Pact authorization": "有效 Pact 授权",
     "connected wallet does not match CAW runtime wallet": "页面连接的钱包和 CAW 钱包不一致",
-    "real CAW Pact authorization": "真实 CAW Pact 授权"
+    "real CAW Pact authorization": "真实 CAW Pact 授权",
+    "Pact authorization expired": "Pact 已过期",
+    "Pact remaining spend below next payment": "Pact 剩余额度不足",
+    "USDC allowance below next payment": "USDC 授权不足",
+    "USDC balance below next payment": "USDC 余额不足",
+    "Base Sepolia ETH gas balance missing": "Base Sepolia ETH gas 不足",
+    "on-chain readiness check unavailable": "链上就绪检查失败"
   };
 
   return translations[item] ?? item;
@@ -1076,6 +1144,15 @@ function getNextStep(missingItems: string[]) {
   }
   if (missingItems.includes("真实 CAW Pact 授权")) {
     return "先给 CAW 钱包领取 Base Sepolia ETH 和 USDC，然后创建真实 Pact 并在手机 App 里批准。";
+  }
+  if (missingItems.includes("Pact 剩余额度不足")) {
+    return "当前 Pact 额度已不足，创建新的最小额度 Pact 后再继续真实支付测试。";
+  }
+  if (missingItems.includes("USDC 授权不足")) {
+    return "先给支付合约执行最小 USDC approve，再继续真实支付。";
+  }
+  if (missingItems.includes("USDC 余额不足") || missingItems.includes("Base Sepolia ETH gas 不足")) {
+    return "先补足 CAW 钱包的 Base Sepolia USDC 和 ETH gas。";
   }
   if (missingItems.length > 0) {
     return `还缺：${missingItems.join("，")}。`;
