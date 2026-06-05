@@ -391,6 +391,7 @@ export function DashboardClient({
   const guardrails = snapshot.guardrails;
   const stats = snapshot.paymentStats;
   const walletConnected = Boolean(snapshot.user.cawWalletAddress);
+  const walletPaired = Boolean(cawStatus?.runtime.walletPaired);
   const missingItems = cawStatus?.missing.map(formatMissingItem) ?? [];
   const realPactReady = Boolean(cawStatus) && !missingItems.includes("真实 CAW Pact 授权");
   const canApproveUsdc = realPactReady && !missingItems.includes("Pact 剩余额度不足");
@@ -468,29 +469,43 @@ export function DashboardClient({
 
         <div className="panel span-12">
           <div className="panel-title">
-            <h2>CAW 手机配对码</h2>
-            <span className={`status ${snapshot.pairingSession ? "active" : "blocked"}`}>
-              {snapshot.pairingSession ? snapshot.pairingSession.status : "未生成"}
+            <h2>{walletPaired ? "CAW 钱包已配对" : "CAW 手机配对码"}</h2>
+            <span className={`status ${walletPaired || snapshot.pairingSession ? "active" : "blocked"}`}>
+              {walletPaired ? "已完成" : snapshot.pairingSession ? snapshot.pairingSession.status : "未生成"}
             </span>
           </div>
           <div className="pairing-box">
             <div>
-              <span className="metric-label">配对码</span>
-              <div className="pairing-code">{snapshot.pairingSession?.code ?? "点击生成配对码"}</div>
+              <span className="metric-label">{walletPaired ? "当前 CAW 钱包" : "配对码"}</span>
+              <div className="pairing-code">
+                {walletPaired
+                  ? cawStatus?.runtime.walletAddress ?? "已配对"
+                  : snapshot.pairingSession?.code ?? "点击生成配对码"}
+              </div>
             </div>
             <div className="pairing-help">
-              <p>1. 点击“生成配对码”。</p>
-              <p>2. 打开手机 Cobo Agentic Wallet App。</p>
-              <p>3. 输入这里显示的 8 位配对码。</p>
-              <p>4. 配对后点击“连接 CAW”。</p>
+              {walletPaired ? (
+                <>
+                  <p>1. 当前 Agent 钱包已经和手机 CAW App 配对。</p>
+                  <p>2. 不需要再输入验证码，重复配对会提示验证失败。</p>
+                  <p>3. 下一步点击“连接 CAW”，再创建或刷新 Pact 授权。</p>
+                </>
+              ) : (
+                <>
+                  <p>1. 点击“生成配对码”。</p>
+                  <p>2. 打开手机 Cobo Agentic Wallet App。</p>
+                  <p>3. 输入这里显示的 8 位配对码。</p>
+                  <p>4. 配对后点击“连接 CAW”。</p>
+                </>
+              )}
             </div>
           </div>
           <div className="actions">
             <button
               onClick={() => callAction("pair", "/api/wallet/caw/pairing-code")}
-              disabled={busyAction === "pair"}
+              disabled={busyAction === "pair" || walletPaired}
             >
-              生成配对码
+              {walletPaired ? "已配对，无需生成" : "生成配对码"}
             </button>
             <button
               className="secondary"
@@ -501,7 +516,9 @@ export function DashboardClient({
             </button>
           </div>
           <p className="metric-label">
-            {snapshot.pairingSession
+            {walletPaired
+              ? "如果换了手机或重装 CAW App，才需要重新生成配对码。当前演示请直接连接 CAW。"
+              : snapshot.pairingSession
               ? `过期时间：${formatTime(snapshot.pairingSession.expiresAt)}`
               : "如果新电脑/新钱包还没有配对，先从这里生成验证码。"}
           </p>
