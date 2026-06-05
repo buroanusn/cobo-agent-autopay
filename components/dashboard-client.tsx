@@ -12,6 +12,9 @@ type ApiResult = {
   status?: string;
   reason?: string;
   note?: string;
+  txHash?: string;
+  amountUsdcMinor?: number;
+  allowanceUsdcMinor?: number;
   usageEvent?: {
     estimatedCredits: number;
     creditsCharged: number;
@@ -114,6 +117,7 @@ const copy = {
     generatePactPlan: "生成 Pact 计划",
     submitPact: "提交 Pact",
     refreshPact: "刷新 Pact",
+    approveUsdc: "授权 USDC",
     pactIntent: "授权意图",
     pactSingleLimit: "单笔 USDC",
     pactDailyLimit: "每日 USDC",
@@ -167,10 +171,11 @@ const copy = {
     running: "运行中...",
     topupOk: "充值",
     connectOk: "CAW 钱包已连接。",
-    authorizeOk: "Pact 已启用。mock 模式会立即激活；真实模式需用户在 App 内审批。",
+    authorizeOk: "Pact 已提交。请在 Cobo Agentic Wallet App 内审批，审批后点击刷新 Pact。",
     pactPreviewOk: "Pact 计划已生成，请确认内容后提交到 Cobo App 审批。",
     refreshPactOk: "Pact 状态已刷新。如果用户已在 Cobo App 审批，系统会保存 pact-scoped API key。",
-    faucetOk: "测试币请求已提交。真实模式会调用 CAW Faucet；mock 模式只返回模拟结果。",
+    approveOk: "USDC 授权已提交到真实 CAW。",
+    faucetOk: "测试币请求已提交，会调用 CAW Faucet。",
     pairOk: "配对码已生成。请在 Cobo Agentic Wallet App 内完成绑定。",
     guardrailsOk: "Guardrails 推荐已生成。最终设置需在 Cobo App 内确认。",
     integrationStatus: "真实 CAW 接入状态",
@@ -219,6 +224,7 @@ const copy = {
     generatePactPlan: "Generate Pact Plan",
     submitPact: "Submit Pact",
     refreshPact: "Refresh Pact",
+    approveUsdc: "Approve USDC",
     pactIntent: "Authorization intent",
     pactSingleLimit: "Single USDC",
     pactDailyLimit: "Daily USDC",
@@ -272,10 +278,11 @@ const copy = {
     running: "Running...",
     topupOk: "Top-up",
     connectOk: "CAW wallet connected.",
-    authorizeOk: "Pact is enabled. Mock mode activates immediately; real mode requires app approval.",
+    authorizeOk: "Pact submitted. Approve it in Cobo Agentic Wallet App, then refresh Pact.",
     pactPreviewOk: "Pact plan generated. Review it before submitting for Cobo App approval.",
     refreshPactOk: "Pact status refreshed. If approved in Cobo App, the pact-scoped API key is now stored.",
-    faucetOk: "Test token request submitted. Real mode calls CAW Faucet; mock mode returns a simulated result.",
+    approveOk: "USDC approval submitted to real CAW.",
+    faucetOk: "Test token request submitted through CAW Faucet.",
     pairOk: "Pairing code generated. Complete pairing in Cobo Agentic Wallet App.",
     guardrailsOk: "Guardrails recommendation generated. Final settings must be confirmed in Cobo App.",
     integrationStatus: "Real CAW Integration Status",
@@ -316,11 +323,11 @@ export function DashboardClient({
     "Analyze the user's portfolio and continue the agent task."
   );
   const [pactIntent, setPactIntent] = useState(
-    "允许这个 Agent 在我的站内 credits 余额不足时，使用 Base Sepolia USDC 自动充值；每次最多 5 USDC，每天最多 20 USDC，有效期 7 天。"
+    "允许这个 Agent 在我的站内 credits 余额不足时，使用 Base Sepolia USDC 自动充值；每次最多 1 USDC，每天最多 5 USDC，有效期 7 天。"
   );
-  const [singleLimitUsdc, setSingleLimitUsdc] = useState("5");
-  const [dailyLimitUsdc, setDailyLimitUsdc] = useState("20");
-  const [monthlyLimitUsdc, setMonthlyLimitUsdc] = useState("100");
+  const [singleLimitUsdc, setSingleLimitUsdc] = useState("1");
+  const [dailyLimitUsdc, setDailyLimitUsdc] = useState("5");
+  const [monthlyLimitUsdc, setMonthlyLimitUsdc] = useState("20");
   const [validDays, setValidDays] = useState("7");
 
   useEffect(() => {
@@ -386,6 +393,7 @@ export function DashboardClient({
   const walletConnected = Boolean(snapshot.user.cawWalletAddress);
   const missingItems = cawStatus?.missing.map(formatMissingItem) ?? [];
   const realPactReady = Boolean(cawStatus) && !missingItems.includes("真实 CAW Pact 授权");
+  const canApproveUsdc = realPactReady && !missingItems.includes("Pact 剩余额度不足");
   const nextStep = getNextStep(missingItems);
   const recentOrders = snapshot.topupOrders.slice(0, 6);
   const recentLedgerEntries = snapshot.ledgerEntries.slice(0, 6);
@@ -648,6 +656,13 @@ export function DashboardClient({
               disabled={busyAction === "refresh-pact" || !authorization}
             >
               {t.refreshPact}
+            </button>
+            <button
+              className="secondary"
+              onClick={() => callAction("approve-usdc", "/api/wallet/caw/approve")}
+              disabled={busyAction === "approve-usdc" || !canApproveUsdc}
+            >
+              {t.approveUsdc}
             </button>
           </div>
         </div>
@@ -1274,6 +1289,13 @@ function statusMessage(action: string, result: ApiResult, lang: Lang) {
 
   if (action === "refresh-pact") {
     return t.refreshPactOk;
+  }
+
+  if (action === "approve-usdc") {
+    if (result.status === "already_approved") {
+      return `${t.approveOk} allowance: ${formatUsdc(result.allowanceUsdcMinor ?? 0)} USDC.`;
+    }
+    return result.txHash ? `${t.approveOk} ${shortHash(result.txHash)}.` : t.approveOk;
   }
 
   if (action === "faucet") {

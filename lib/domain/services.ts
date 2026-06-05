@@ -411,6 +411,81 @@ export async function refreshCawAuthorization(input: { userId?: string }) {
   };
 }
 
+export async function approveUsdcForCreditsPayment(input: {
+  userId?: string;
+  amountUsdcMinor?: number;
+}) {
+  const repository = getCreditRepository();
+  const userId = input.userId ?? DEMO_USER_ID;
+  const user = await repository.requireUser(userId);
+  const account = await repository.requireCreditAccount(userId);
+  const authorization = await repository.getActiveAuthorization(userId);
+  const amountUsdcMinor = input.amountUsdcMinor ?? creditsToUsdcMinor(account.autoTopupCredits);
+
+  if (!user.cawWalletAddress) {
+    throw new Error("Connect the real CAW wallet before approving USDC.");
+  }
+  if (!authorization || authorization.status !== "active") {
+    throw new Error("Approve an active CAW Pact in Cobo App before approving USDC.");
+  }
+  if (Date.parse(authorization.expiresAt) <= Date.now()) {
+    authorization.status = "expired";
+    await repository.updateAuthorization(authorization);
+    throw new Error("The active CAW Pact is expired. Create and approve a new Pact first.");
+  }
+  if (authorization.monthlyLimitUsdcMinor - authorization.spentMonthUsdcMinor < amountUsdcMinor) {
+    throw new Error("The active CAW Pact has no remaining spend for this approval. Create and approve a new Pact first.");
+  }
+
+  const runtime = await getCawRuntimeStatus();
+  if (runtime.mode !== "http") {
+    throw new Error("USDC approval requires real CAW mode.");
+  }
+  if (authorization.pactId.startsWith("mock_")) {
+    throw new Error("Mock Pact cannot approve real USDC.");
+  }
+
+  const readiness = await getOnchainSpendReadiness({
+    walletAddress: user.cawWalletAddress,
+    paymentContractAddress: requiredPaymentContractAddress(),
+    requiredUsdcMinor: amountUsdcMinor
+  });
+  if (readiness.error) {
+    throw new Error(`Unable to check on-chain USDC allowance: ${readiness.error}`);
+  }
+  if ((readiness.walletUsdcMinor ?? 0) < amountUsdcMinor) {
+    throw new Error("CAW wallet USDC balance is below the requested approval amount.");
+  }
+  if ((readiness.gasEthWei ?? 0n) <= 0n) {
+    throw new Error("CAW wallet needs Base Sepolia ETH for gas before approving USDC.");
+  }
+  if ((readiness.allowanceUsdcMinor ?? 0) >= amountUsdcMinor) {
+    return {
+      status: "already_approved" as const,
+      allowanceUsdcMinor: readiness.allowanceUsdcMinor,
+      snapshot: await repository.snapshotForUser(userId)
+    };
+  }
+
+  const gateway = createCawGateway();
+  const result = await gateway.executeUsdcApproval({
+    userId,
+    walletAddress: user.cawWalletAddress,
+    pactId: authorization.pactId,
+    pactApiKey: authorization.pactApiKey,
+    spenderAddress: requiredPaymentContractAddress(),
+    usdcAddress: getConfiguredChain().usdcAddress,
+    amountUsdcMinor
+  });
+
+  return {
+    status: result.status,
+    txHash: result.txHash,
+    amountUsdcMinor,
+    snapshot: await repository.snapshotForUser(userId)
+  };
+}
+
 export async function requestTestTokens(input: { userId?: string; tokenId?: string }) {
   const repository = getCreditRepository();
   const userId = input.userId ?? DEMO_USER_ID;
@@ -574,6 +649,21 @@ export async function executeCreditsTopup(input: {
       status: "blocked" as const,
       reason: policy.reason,
       order: failedOrder,
+      snapshot: await repository.snapshotForUser(userId)
+    };
+  }
+
+  const preflight = await checkRealPaymentPreflight({
+    userId,
+    walletAddress: policy.authorization.walletAddress,
+    pactId: policy.authorization.pactId,
+    amountUsdcMinor
+  });
+
+  if (!preflight.ok) {
+    return {
+      status: "blocked" as const,
+      reason: preflight.reason,
       snapshot: await repository.snapshotForUser(userId)
     };
   }
@@ -754,6 +844,53 @@ async function checkAuthorizationPolicy(userId: string, amountUsdcMinor: number)
   }
 
   return { ok: true as const, authorization };
+}
+
+async function checkRealPaymentPreflight(input: {
+  userId: string;
+  walletAddress: string;
+  pactId: string;
+  amountUsdcMinor: number;
+}) {
+  const runtime = await getCawRuntimeStatus();
+  if (runtime.mode !== "http") {
+    return { ok: true as const };
+  }
+  if (input.pactId.startsWith("mock_")) {
+    return { ok: false as const, reason: "mock_pact_not_allowed_for_real_payment" };
+  }
+  if (!input.walletAddress) {
+    return { ok: false as const, reason: "missing_caw_wallet_address" };
+  }
+
+  const readiness = await getOnchainSpendReadiness({
+    walletAddress: input.walletAddress,
+    paymentContractAddress: requiredPaymentContractAddress(),
+    requiredUsdcMinor: input.amountUsdcMinor
+  });
+
+  if (readiness.error) {
+    return { ok: false as const, reason: "onchain_readiness_unavailable" };
+  }
+  if ((readiness.walletUsdcMinor ?? 0) < input.amountUsdcMinor) {
+    return { ok: false as const, reason: "insufficient_usdc_balance" };
+  }
+  if ((readiness.allowanceUsdcMinor ?? 0) < input.amountUsdcMinor) {
+    return { ok: false as const, reason: "insufficient_usdc_allowance" };
+  }
+  if ((readiness.gasEthWei ?? 0n) <= 0n) {
+    return { ok: false as const, reason: "insufficient_base_sepolia_eth_gas" };
+  }
+
+  return { ok: true as const };
+}
+
+function requiredPaymentContractAddress() {
+  const address = process.env.PAYMENT_CONTRACT_ADDRESS;
+  if (!address) {
+    throw new Error("PAYMENT_CONTRACT_ADDRESS is required for real payments.");
+  }
+  return address;
 }
 
 async function recordAuthorizationSpend(authorization: CawAuthorization, amountUsdcMinor: number) {

@@ -31,13 +31,13 @@ export const CREDITS_PER_USDC = 1000;
 export const DEFAULT_CREDIT_ACCOUNT = {
   openingBalanceCredits: 1800,
   lowBalanceThresholdCredits: 1000,
-  autoTopupCredits: 5000
+  autoTopupCredits: 1000
 } as const;
 
 export const DEFAULT_SPEND_POLICY = {
-  singleLimitUsdcMinor: 5 * USDC_MINOR_UNITS,
-  dailyLimitUsdcMinor: 20 * USDC_MINOR_UNITS,
-  monthlyLimitUsdcMinor: 100 * USDC_MINOR_UNITS,
+  singleLimitUsdcMinor: 1 * USDC_MINOR_UNITS,
+  dailyLimitUsdcMinor: 5 * USDC_MINOR_UNITS,
+  monthlyLimitUsdcMinor: 20 * USDC_MINOR_UNITS,
   validDays: 7
 } as const;
 

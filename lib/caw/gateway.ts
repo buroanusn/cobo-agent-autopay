@@ -33,6 +33,16 @@ export type ExecuteCreditsPurchaseInput = {
   credits: number;
 };
 
+export type ExecuteUsdcApprovalInput = {
+  userId: string;
+  walletAddress: string;
+  pactId: string;
+  pactApiKey?: string;
+  spenderAddress?: string;
+  usdcAddress: string;
+  amountUsdcMinor: number;
+};
+
 export type CawPactStatus = {
   pactId: string;
   status: "pending_user_approval" | "active" | "expired" | "revoked";
@@ -65,6 +75,10 @@ export type CawGateway = {
     txHash: string;
     status: "submitted" | "confirmed";
     mockConfirmed: boolean;
+  }>;
+  executeUsdcApproval(input: ExecuteUsdcApprovalInput): Promise<{
+    txHash: string;
+    status: "submitted" | "confirmed";
   }>;
 };
 
@@ -135,6 +149,13 @@ class MockCawGateway implements CawGateway {
       txHash: `0xmock${input.onchainOrderId.slice(2, 62)}`,
       status: "confirmed" as const,
       mockConfirmed: true
+    };
+  }
+
+  async executeUsdcApproval(input: ExecuteUsdcApprovalInput) {
+    return {
+      txHash: `0xmockapprove${input.amountUsdcMinor.toString(16).padStart(48, "0")}`,
+      status: "confirmed" as const
     };
   }
 }
@@ -278,6 +299,52 @@ class HttpCawGateway implements CawGateway {
     };
   }
 
+  async executeUsdcApproval(input: ExecuteUsdcApprovalInput) {
+    const pactApiKey = input.pactApiKey || process.env.CAW_PACT_API_KEY;
+    if (!pactApiKey) {
+      throw new Error(
+        "CAW Pact is not active yet. Ask the user to approve it in Cobo App, then refresh authorization before approving USDC."
+      );
+    }
+
+    const calldata = encodeFunctionData({
+      abi: [
+        {
+          type: "function",
+          name: "approve",
+          stateMutability: "nonpayable",
+          inputs: [
+            { name: "spender", type: "address" },
+            { name: "amount", type: "uint256" }
+          ],
+          outputs: [{ type: "bool" }]
+        }
+      ],
+      functionName: "approve",
+      args: [
+        requiredInput(input.spenderAddress, "PAYMENT_CONTRACT_ADDRESS") as `0x${string}`,
+        BigInt(input.amountUsdcMinor)
+      ]
+    });
+
+    const result = (
+      await this.transactionsApi(pactApiKey).contractCall(this.walletId, {
+        chain_id: getConfiguredCawChainId(),
+        src_addr: input.walletAddress,
+        contract_addr: input.usdcAddress,
+        value: "0",
+        calldata,
+        request_id: `approve-usdc-${Date.now()}`,
+        description: `Approve USDC for CreditsPayment ${input.amountUsdcMinor}`
+      })
+    ).data.result;
+
+    return {
+      txHash: result.transaction_hash ?? result.id ?? "",
+      status: result.status >= 900 ? ("confirmed" as const) : ("submitted" as const)
+    };
+  }
+
   private ownerConfig() {
     return new Configuration({ apiKey: this.apiKey, basePath: this.baseUrl });
   }
@@ -304,11 +371,11 @@ class HttpCawGateway implements CawGateway {
 }
 
 export function createCawGateway(): CawGateway {
-  return process.env.CAW_MODE === "http" ? new HttpCawGateway() : new MockCawGateway();
+  return getConfiguredCawMode() === "mock" ? new MockCawGateway() : new HttpCawGateway();
 }
 
 export async function getCawRuntimeStatus(): Promise<CawRuntimeStatus> {
-  const mode = process.env.CAW_MODE === "http" ? "http" : "mock";
+  const mode = getConfiguredCawMode();
   const apiUrl = process.env.AGENT_WALLET_API_URL || process.env.CAW_API_BASE_URL || "";
   const apiKey = process.env.AGENT_WALLET_API_KEY || process.env.CAW_API_KEY || "";
   const walletId = process.env.AGENT_WALLET_WALLET_ID || process.env.CAW_WALLET_ID || "";
@@ -394,6 +461,13 @@ export async function getCawRuntimeStatus(): Promise<CawRuntimeStatus> {
       error: error instanceof Error ? error.message : "Unable to query CAW runtime status."
     };
   }
+}
+
+function getConfiguredCawMode(): CawRuntimeStatus["mode"] {
+  if (process.env.CAW_MODE === "mock" && process.env.CAW_ALLOW_MOCK === "true") {
+    return "mock";
+  }
+  return "http";
 }
 
 function inferCawEnvironment(apiUrl: string): CawRuntimeStatus["environment"] {

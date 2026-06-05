@@ -8,9 +8,9 @@ Original GitHub repository README is preserved at `docs/github-readme.md`.
 
 - Next.js dashboard and API routes.
 - Chain-off credits ledger with idempotent top-up orders.
-- CAW gateway boundary with a mock mode for local development and a real Cobo Agentic Wallet SDK adapter.
+- CAW gateway boundary with a real Cobo Agentic Wallet SDK adapter. Mock mode is disabled by default and only available when explicitly enabled for offline local development.
 - Base USDC configuration and a Solidity `CreditsPayment` contract that emits order-linked purchase events.
-- Default policy: 5 USDC per transaction, 20 USDC per day, 100 USDC per month, 7-day validity.
+- Default policy: 1 USDC per transaction, 5 USDC per day, 20 USDC per month, 7-day validity.
 - Agent-drafted CAW Pact previews: natural-language intent becomes a PactSpec
   draft, then backend validation constrains it to the configured chain, USDC
   token, payment contract, and spend limits before CAW submission.
@@ -32,12 +32,15 @@ npm run dev
 
 Open `http://localhost:3000/dashboard`.
 
-The default `CAW_MODE=mock` flow lets you:
+The default runtime expects real CAW credentials and real Base Sepolia calls:
 
-1. Connect a demo CAW wallet.
-2. Create an active Pact-style authorization.
-3. Run an agent task that consumes credits.
-4. Auto top up with mock Base USDC when the balance drops under the threshold.
+1. Pair/connect the configured CAW wallet.
+2. Generate and submit a CAW Pact from user intent.
+3. Approve the Pact in the Cobo Agentic Wallet App.
+4. Approve USDC allowance for the deployed `CreditsPayment` contract.
+5. Run the agent task or manual top-up; the backend submits a real CAW contract call.
+
+Offline mock mode requires both `CAW_MODE=mock` and `CAW_ALLOW_MOCK=true`.
 
 ## Pact Drafter
 
@@ -71,7 +74,7 @@ npm run db:migrate
 
 Set `DATABASE_URL` to a Postgres database before running migrations.
 
-Use `STORAGE_DRIVER=memory` only for a throwaway local mock demo.
+Use `STORAGE_DRIVER=memory` only for throwaway local development. Real runs should use `STORAGE_DRIVER=prisma`.
 
 ## Testnet Mode
 
@@ -113,10 +116,10 @@ See [Next Implementation Questions](docs/next-implementation-questions.md) for t
 
 For a real deployment:
 
-- Replace `CAW_MODE=mock` with `CAW_MODE=http`.
+- Use `CAW_MODE=http`. This is also the default unless mock is explicitly enabled with `CAW_ALLOW_MOCK=true`.
 - Set Cobo Agentic Wallet SDK credentials: `AGENT_WALLET_API_URL`,
   `AGENT_WALLET_API_KEY`, and `AGENT_WALLET_WALLET_ID`.
-- Keep `CHAIN_ENV=base-sepolia` and `CAW_CHAIN_ID=BASE_SEPOLIA` for testnet demos.
+- Keep `CHAIN_ENV=base-sepolia` and `CAW_CHAIN_ID=TBASE_SETH` for Base Sepolia runs.
 - Use `CAW_FAUCET_TOKEN_ID` for CAW Faucet requests. Confirm the exact token id from
   CAW metadata if your test environment uses a different name.
 - Deploy `contracts/CreditsPayment.sol` on Base Sepolia for testnet demos.
