@@ -77,6 +77,37 @@ button.compact {
   padding: 36px 0 56px;
 }
 
+.auth-page {
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+}
+
+.auth-panel {
+  width: min(440px, 100%);
+}
+
+.auth-form {
+  display: grid;
+  gap: 14px;
+  margin-top: 20px;
+}
+
+.auth-form input {
+  width: 100%;
+  min-height: 42px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  padding: 0 12px;
+  background: #fff;
+}
+
+.error {
+  margin: 14px 0 0;
+  color: var(--danger);
+  font-weight: 650;
+}
+
 .topbar {
   display: flex;
   align-items: flex-start;

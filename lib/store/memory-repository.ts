@@ -12,6 +12,7 @@ import type {
 } from "@/lib/domain/types";
 import {
   createId,
+  createUserWithDefaults,
   db,
   getActiveAuthorization,
   nowIso,
@@ -32,6 +33,17 @@ export const memoryRepository: CreditRepository = {
   nowIso,
   async snapshotForUser(userId: string): Promise<DashboardSnapshot> {
     return snapshotForUser(userId);
+  },
+  async getOrCreateUserByEmail(email: string): Promise<User> {
+    const normalizedEmail = normalizeEmail(email);
+    const existing = [...db.users.values()].find((user) => user.email === normalizedEmail);
+    return existing ?? createUserWithDefaults(normalizedEmail);
+  },
+  async findUserByCawWalletAddress(walletAddress: string): Promise<User | undefined> {
+    const normalizedWallet = walletAddress.toLowerCase();
+    return [...db.users.values()].find(
+      (user) => user.cawWalletAddress?.toLowerCase() === normalizedWallet
+    );
   },
   async requireUser(userId: string): Promise<User> {
     return requireUser(userId);
@@ -141,3 +153,7 @@ export const memorySnapshotNetwork = {
   usdcAddress: getConfiguredChain().usdcAddress,
   creditsPerUsdc: CREDITS_PER_USDC
 };
+
+function normalizeEmail(email: string) {
+  return email.trim().toLowerCase();
+}

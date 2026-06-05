@@ -10,6 +10,9 @@ testnet flow has been verified on Base Sepolia with the minimum spend path.
 Completed:
 
 - Next.js dashboard and API routes for agent credits, CAW authorization, real payment, and settlement.
+- Database-backed email login is implemented. Each logged-in app user has
+  isolated credits, orders, ledger entries, Pact records, and CAW wallet binding.
+- CAW wallet addresses are unique per app user; duplicate binding is rejected.
 - Real CAW HTTP mode is the default runtime.
 - Mock CAW mode is disabled by default and only available when both
   `CAW_MODE=mock` and `CAW_ALLOW_MOCK=true` are set for offline local
@@ -26,6 +29,8 @@ Completed:
 - The x402 mock demo panel and `/api/x402/resource` route were removed for the real-environment testing stage.
 - Dashboard now has a real CAW USDC approval action for `approve(paymentContract, amount)`.
 - Default top-up and Pact form values now target the minimum 1 USDC path.
+- Dashboard snapshots are public-safe: pact-scoped API keys are no longer sent
+  to the browser.
 
 Latest relevant commits:
 
@@ -40,6 +45,7 @@ a775634 Add CAW pact preview flow
 ```bash
 npm install
 npm run db:generate
+npx prisma migrate deploy
 npm run dev
 ```
 
@@ -59,6 +65,8 @@ CAW_CHAIN_ID=TBASE_SETH
 ```
 
 Local `.env` contains CAW credentials and must not be committed.
+Set `AUTH_SESSION_SECRET` before production deployment. Local development falls
+back to a non-production session secret.
 
 ## Real CAW Wallet State
 
@@ -205,6 +213,8 @@ instead of creating a fake or doomed payment order.
 
 Dashboard:
 
+- Login by email at `/login`.
+- Keep all dashboard/API actions scoped to the logged-in database user.
 - Connect configured CAW wallet.
 - Generate Pact preview from natural-language intent.
 - Submit Pact to CAW.
@@ -216,6 +226,11 @@ Dashboard:
 
 Backend:
 
+- Database-backed user creation from email login.
+- Signed httpOnly app session cookie.
+- Per-user repository isolation for accounts, Pact records, top-up orders,
+  usage events, and ledger entries.
+- Unique CAW wallet address binding across users.
 - Real CAW `submitPact`.
 - Real CAW `contractCall` for `CreditsPayment.buyCredits`.
 - Real CAW `contractCall` for ERC-20 `approve` through the dashboard/API.
@@ -225,53 +240,65 @@ Backend:
 
 ## Known Gaps
 
-1. **Automatic chain listener is missing**
+1. **CAW wallet provisioning is still single-runtime**
+   - App users are now separate database users.
+   - The current CAW SDK adapter still uses the one wallet configured in `.env`.
+   - To let every real user bring a distinct CAW wallet, add per-user CAW wallet
+     provisioning/profile storage or a supported CAW multi-wallet selector.
+   - Until then, duplicate wallet binding is blocked.
+
+2. **Automatic chain listener is missing**
    - Current settlement route works, but local verification required manually posting the event.
    - Add a listener for `CreditsPurchased` on `CreditsPayment`.
    - Listener should call `POST /api/webhooks/chain/credits-payment` with tx hash, order id, amount, and deterministic event id.
 
-2. **Payment status polling is incomplete**
+3. **Payment status polling is incomplete**
    - `executeCreditsPurchase` records CAW submission, but does not poll CAW until final `Success` / `Failed`.
    - Add a payment-status refresh job or endpoint to update `caw_submitted` orders.
 
-3. **Pact generation is still deterministic by default**
+4. **Pact generation is still deterministic by default**
    - The drafter supports optional OpenAI Responses API usage when `PACT_DRAFTER_MODE=llm`.
    - Need production-grade LLM prompt evaluation and stricter ambiguity handling before relying on arbitrary user text.
 
-4. **x402 mock demo has been removed**
+5. **x402 mock demo has been removed**
    - Do not use the old x402 route for current testing.
    - If x402 becomes a product requirement again, add it as a real provider integration instead of a mock panel.
 
-5. **The 1 USDC test Pact is exhausted**
+6. **The 1 USDC test Pact is exhausted**
    - Do not rerun real payments under the same Pact.
    - For the next real operation, create and approve a new minimal Pact.
 
-6. **Base Sepolia ETH is low**
+7. **Base Sepolia ETH is low**
    - Current wallet had `0.00015 ETH` before verification.
    - Top up Base Sepolia ETH before repeated real tests.
 
 ## Recommended Next Features
 
-1. Add automatic on-chain event listener.
+1. Add per-user CAW wallet provisioning or profile selection.
+   - Store wallet UUID/address per app user.
+   - Ensure CAW transactions use the logged-in user's configured wallet, not a
+     single env wallet.
+
+2. Add automatic on-chain event listener.
    - Target: `CreditsPurchased(bytes32,address,uint256,uint256)`.
    - Store last processed block or use deterministic event ids.
    - Keep webhook idempotency.
 
-2. Add CAW tx status refresh endpoint.
+3. Add CAW tx status refresh endpoint.
    - Input: order id or request id.
    - Reads CAW tx status.
    - Updates order status and tx hash.
    - If success and listener has not settled yet, surface a clear "waiting for chain event" state.
 
-3. Improve Pact drafter ambiguity handling.
+4. Improve Pact drafter ambiguity handling.
    - If user intent lacks amount, chain, token, or duration, ask before submission.
    - Do not silently default ambiguous real CAW authorization requests.
 
-4. Add clearer audit/export view.
+5. Add clearer audit/export view.
    - Compact dashboard remains simple.
    - Add a separate detail drawer for order id, CAW tx id, chain tx hash, Pact id, and webhook event id.
 
-5. Clean old mock data.
+6. Clean old mock data.
    - Current database contains previous mock orders with `0xmock...` tx hashes.
    - Add a reset/demo-seed script or a filtered "real only" view.
 
@@ -282,6 +309,15 @@ npm run typecheck
 npm run lint
 curl -s -o /dev/null -w '%{http_code}' http://localhost:3000/dashboard
 curl -s http://localhost:3000/api/wallet/caw/status
+```
+
+Login smoke test:
+
+```bash
+curl -s -c /private/tmp/agent_to_token_cookie.txt \
+  -H 'content-type: application/json' \
+  -d '{"email":"demo@agent.local"}' \
+  http://localhost:3000/api/auth/login
 ```
 
 Useful CAW commands:

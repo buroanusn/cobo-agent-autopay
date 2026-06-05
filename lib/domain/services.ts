@@ -258,9 +258,14 @@ export async function connectCawWallet(input: {
   const user = await repository.requireUser(userId);
   const gateway = createCawGateway();
   const connection = await gateway.connectWallet({ userId, walletAddress });
+  const existing = await repository.findUserByCawWalletAddress(connection.walletAddress);
+  if (existing && existing.id !== user.id) {
+    throw new Error(`This CAW wallet is already bound to ${existing.email}.`);
+  }
 
   await repository.updateUser({
     ...user,
+    cawWalletId: connection.walletId,
     cawWalletAddress: connection.walletAddress
   });
 

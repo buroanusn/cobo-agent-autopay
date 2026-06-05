@@ -1,16 +1,13 @@
+import { requireCurrentUser } from "@/lib/auth/session";
 import { refreshCawAuthorization } from "@/lib/domain/services";
-import { errorJson, okJson, readJson } from "@/lib/http";
+import { errorJson, okJson } from "@/lib/http";
 
 export const dynamic = "force-dynamic";
 
-type RefreshBody = {
-  userId: string;
-};
-
-export async function POST(request: Request) {
+export async function POST() {
   try {
-    const body = await readJson<RefreshBody>(request);
-    return okJson(await refreshCawAuthorization(body));
+    const user = await requireCurrentUser();
+    return okJson(await refreshCawAuthorization({ userId: user.id }));
   } catch (error) {
     return errorJson(error);
   }

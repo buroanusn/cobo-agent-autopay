@@ -4,9 +4,9 @@ export function okJson<T>(data: T, init?: ResponseInit) {
   return NextResponse.json(data, init);
 }
 
-export function errorJson(error: unknown, status = 400) {
+export function errorJson(error: unknown, status?: number) {
   const message = extractErrorMessage(error);
-  return NextResponse.json({ error: message }, { status });
+  return NextResponse.json({ error: message }, { status: status ?? extractErrorStatus(error) ?? 400 });
 }
 
 export async function readJson<T>(request: Request): Promise<Partial<T>> {
@@ -37,6 +37,13 @@ function extractUpstreamError(error: unknown) {
   const base = status ? `Upstream CAW request failed with status ${status}` : "Upstream CAW request failed";
 
   return detail ? `${base}: ${detail}` : base;
+}
+
+function extractErrorStatus(error: unknown) {
+  if (!isRecord(error) || typeof error.status !== "number") {
+    return undefined;
+  }
+  return error.status;
 }
 
 function sanitizeErrorData(value: unknown): unknown {

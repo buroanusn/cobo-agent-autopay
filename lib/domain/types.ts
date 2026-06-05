@@ -18,6 +18,7 @@ export type AgentUsageStatus = "completed" | "failed_insufficient_balance";
 export type User = {
   id: string;
   email: string;
+  cawWalletId?: string;
   cawWalletAddress?: string;
   createdAt: string;
 };

@@ -1,16 +1,13 @@
+import { requireCurrentUser } from "@/lib/auth/session";
 import { executeAutoTopup } from "@/lib/domain/services";
-import { errorJson, okJson, readJson } from "@/lib/http";
+import { errorJson, okJson } from "@/lib/http";
 
 export const dynamic = "force-dynamic";
 
-type TopupBody = {
-  userId: string;
-};
-
-export async function POST(request: Request) {
+export async function POST() {
   try {
-    const body = await readJson<TopupBody>(request);
-    return okJson(await executeAutoTopup({ userId: body.userId, reason: "manual" }));
+    const user = await requireCurrentUser();
+    return okJson(await executeAutoTopup({ userId: user.id, reason: "manual" }));
   } catch (error) {
     return errorJson(error);
   }

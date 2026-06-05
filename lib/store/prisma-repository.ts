@@ -4,7 +4,6 @@ import {
   DEFAULT_CREDIT_ACCOUNT,
   DEFAULT_GUARDRAILS,
   DEFAULT_SPEND_POLICY,
-  DEMO_CAW_WALLET,
   DEMO_USER_EMAIL,
   DEMO_USER_ID,
   getConfiguredCawChainId,
@@ -66,7 +65,9 @@ export const prismaRepository: CreditRepository = {
     const monthAgo = now - 30 * 24 * 60 * 60 * 1000;
     const credited24h = creditedOrders.filter((order) => Date.parse(order.updatedAt) >= dayAgo);
     const credited30d = creditedOrders.filter((order) => Date.parse(order.updatedAt) >= monthAgo);
-    const mappedAuthorization = authorization ? mapAuthorization(authorization) : undefined;
+    const mappedAuthorization = authorization
+      ? mapAuthorization(authorization, { includePactApiKey: false })
+      : undefined;
 
     return {
       user: mapUser(user),
@@ -79,7 +80,7 @@ export const prismaRepository: CreditRepository = {
         dailyLimitUsdcMinor:
           mappedAuthorization?.dailyLimitUsdcMinor ?? DEFAULT_SPEND_POLICY.dailyLimitUsdcMinor,
         reviewThresholdUsdcMinor: DEFAULT_GUARDRAILS.reviewThresholdUsdcMinor,
-        allowedAddresses: [user.cawWalletAddress ?? DEMO_CAW_WALLET],
+        allowedAddresses: user.cawWalletAddress ? [user.cawWalletAddress] : [],
         allowedChains: [getConfiguredCawChainId()],
         generatedBy: "system_default",
         updatedAt: mappedAuthorization?.createdAt ?? user.createdAt.toISOString()
@@ -127,6 +128,44 @@ export const prismaRepository: CreditRepository = {
       }
     };
   },
+  async getOrCreateUserByEmail(email: string): Promise<User> {
+    const normalizedEmail = normalizeEmail(email);
+    const existing = await prisma.user.findUnique({ where: { email: normalizedEmail } });
+    if (existing) {
+      await ensureCreditAccount(existing.id);
+      return mapUser(existing);
+    }
+
+    const userId = createId("usr");
+    const created = await prisma.user.create({
+      data: {
+        id: userId,
+        email: normalizedEmail,
+        creditAccount: {
+          create: {
+            balanceCredits: DEFAULT_CREDIT_ACCOUNT.openingBalanceCredits,
+            lowBalanceThresholdCredits: DEFAULT_CREDIT_ACCOUNT.lowBalanceThresholdCredits,
+            autoTopupCredits: DEFAULT_CREDIT_ACCOUNT.autoTopupCredits
+          }
+        },
+        ledgerEntries: {
+          create: {
+            id: createId("led"),
+            type: "opening_grant",
+            creditsDelta: DEFAULT_CREDIT_ACCOUNT.openingBalanceCredits,
+            balanceAfterCredits: DEFAULT_CREDIT_ACCOUNT.openingBalanceCredits
+          }
+        }
+      }
+    });
+    return mapUser(created);
+  },
+  async findUserByCawWalletAddress(walletAddress: string): Promise<User | undefined> {
+    const user = await prisma.user.findFirst({
+      where: { cawWalletAddress: { equals: walletAddress, mode: "insensitive" } }
+    });
+    return user ? mapUser(user) : undefined;
+  },
   async requireUser(userId: string): Promise<User> {
     await ensureDemoData(userId);
     return mapUser(await requirePrismaUser(userId));
@@ -151,6 +190,7 @@ export const prismaRepository: CreditRepository = {
       where: { id: user.id },
       data: {
         email: user.email,
+        cawWalletId: user.cawWalletId,
         cawWalletAddress: user.cawWalletAddress
       }
     });
@@ -382,6 +422,19 @@ async function ensureDemoData(userId: string) {
   });
 }
 
+async function ensureCreditAccount(userId: string) {
+  await prisma.creditAccount.upsert({
+    where: { userId },
+    create: {
+      userId,
+      balanceCredits: DEFAULT_CREDIT_ACCOUNT.openingBalanceCredits,
+      lowBalanceThresholdCredits: DEFAULT_CREDIT_ACCOUNT.lowBalanceThresholdCredits,
+      autoTopupCredits: DEFAULT_CREDIT_ACCOUNT.autoTopupCredits
+    },
+    update: {}
+  });
+}
+
 async function requirePrismaUser(userId: string) {
   const user = await prisma.user.findUnique({ where: { id: userId } });
   if (!user) {
@@ -411,13 +464,24 @@ function orderIdToBytes32(orderId: string) {
   return `0x${createHash("sha256").update(orderId).digest("hex")}`;
 }
 
-function mapUser(user: { id: string; email: string; cawWalletAddress: string | null; createdAt: Date }): User {
+function mapUser(user: {
+  id: string;
+  email: string;
+  cawWalletId: string | null;
+  cawWalletAddress: string | null;
+  createdAt: Date;
+}): User {
   return {
     id: user.id,
     email: user.email,
+    cawWalletId: user.cawWalletId ?? undefined,
     cawWalletAddress: user.cawWalletAddress ?? undefined,
     createdAt: user.createdAt.toISOString()
   };
+}
+
+function normalizeEmail(email: string) {
+  return email.trim().toLowerCase();
 }
 
 function mapPairingSession(session: {
@@ -450,29 +514,32 @@ function mapCreditAccount(account: {
   };
 }
 
-function mapAuthorization(authorization: {
-  id: string;
-  userId: string;
-  walletAddress: string;
-  pactId: string;
-  pactApiKey: string | null;
-  status: CawAuthorization["status"];
-  singleLimitUsdcMinor: number;
-  dailyLimitUsdcMinor: number;
-  monthlyLimitUsdcMinor: number;
-  spentTodayUsdcMinor: number;
-  spentMonthUsdcMinor: number;
-  dailyWindowStart: Date;
-  monthlyWindowStart: Date;
-  expiresAt: Date;
-  createdAt: Date;
-}): CawAuthorization {
+function mapAuthorization(
+  authorization: {
+    id: string;
+    userId: string;
+    walletAddress: string;
+    pactId: string;
+    pactApiKey: string | null;
+    status: CawAuthorization["status"];
+    singleLimitUsdcMinor: number;
+    dailyLimitUsdcMinor: number;
+    monthlyLimitUsdcMinor: number;
+    spentTodayUsdcMinor: number;
+    spentMonthUsdcMinor: number;
+    dailyWindowStart: Date;
+    monthlyWindowStart: Date;
+    expiresAt: Date;
+    createdAt: Date;
+  },
+  options: { includePactApiKey?: boolean } = { includePactApiKey: true }
+): CawAuthorization {
   return {
     id: authorization.id,
     userId: authorization.userId,
     walletAddress: authorization.walletAddress,
     pactId: authorization.pactId,
-    pactApiKey: authorization.pactApiKey ?? undefined,
+    pactApiKey: options.includePactApiKey ? authorization.pactApiKey ?? undefined : undefined,
     status: authorization.status,
     singleLimitUsdcMinor: authorization.singleLimitUsdcMinor,
     dailyLimitUsdcMinor: authorization.dailyLimitUsdcMinor,

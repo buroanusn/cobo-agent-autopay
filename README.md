@@ -7,6 +7,7 @@ Original GitHub repository README is preserved at `docs/github-readme.md`.
 ## What This Implements
 
 - Next.js dashboard and API routes.
+- Email-based app login with database-backed users and per-user credits, orders, Pact records, and CAW wallet binding.
 - Chain-off credits ledger with idempotent top-up orders.
 - CAW gateway boundary with a real Cobo Agentic Wallet SDK adapter. Mock mode is disabled by default and only available when explicitly enabled for offline local development.
 - Base USDC configuration and a Solidity `CreditsPayment` contract that emits order-linked purchase events.
@@ -31,6 +32,11 @@ npm run dev
 ```
 
 Open `http://localhost:3000/dashboard`.
+
+The dashboard requires login. Enter an email at `/login`; the app creates or
+loads that database user and stores a signed httpOnly session cookie. CAW wallet
+addresses are unique per app user, so an address already bound to one user
+cannot be bound by another.
 
 The default runtime expects real CAW credentials and real Base Sepolia calls:
 
@@ -123,6 +129,7 @@ For a real deployment:
 - Use `CAW_MODE=http`. This is also the default unless mock is explicitly enabled with `CAW_ALLOW_MOCK=true`.
 - Set Cobo Agentic Wallet SDK credentials: `AGENT_WALLET_API_URL`,
   `AGENT_WALLET_API_KEY`, and `AGENT_WALLET_WALLET_ID`.
+- Set `AUTH_SESSION_SECRET` before production deployment.
 - Keep `CHAIN_ENV=base-sepolia` and `CAW_CHAIN_ID=TBASE_SETH` for Base Sepolia runs.
 - Use `CAW_FAUCET_TOKEN_ID` for CAW Faucet requests. Confirm the exact token id from
   CAW metadata if your test environment uses a different name.

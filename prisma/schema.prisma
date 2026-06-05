@@ -44,7 +44,8 @@ enum CawPairingStatus {
 model User {
   id               String             @id
   email            String             @unique
-  cawWalletAddress String?
+  cawWalletId      String?            @unique
+  cawWalletAddress String?            @unique
   createdAt        DateTime           @default(now())
   creditAccount    CreditAccount?
   authorizations   CawAuthorization[]

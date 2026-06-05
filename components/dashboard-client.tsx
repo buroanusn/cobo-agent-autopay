@@ -94,6 +94,7 @@ type Lang = "zh" | "en";
 const copy = {
   zh: {
     language: "English",
+    logout: "退出",
     title: "Agent 自动小额支付演示",
     subtitle: "演示 AI Agent 如何在用户授权范围内，用真实 CAW 钱包完成小额支付。",
     ready: "余额充足",
@@ -200,6 +201,7 @@ const copy = {
   },
   en: {
     language: "中文",
+    logout: "Logout",
     title: "CAW Small Auto-Payment Demo",
     subtitle:
       "The agent monitors token balance and triggers small top-ups under CAW Pact and user Guardrails; larger or risky requests move to manual approval.",
@@ -339,6 +341,15 @@ export function DashboardClient({
       fetch("/api/credits/balance", { cache: "no-store" }),
       fetch("/api/wallet/caw/status", { cache: "no-store" })
     ]);
+    if (snapshotResponse.status === 401 || cawStatusResponse.status === 401) {
+      window.location.href = "/login";
+      return;
+    }
+    if (!snapshotResponse.ok) {
+      const result = (await snapshotResponse.json()) as { error?: string };
+      setError(result.error ?? "Unable to refresh dashboard.");
+      return;
+    }
     const nextSnapshot = (await snapshotResponse.json()) as DashboardSnapshot;
     setSnapshot(nextSnapshot);
 
@@ -360,6 +371,10 @@ export function DashboardClient({
       });
       const result = (await response.json()) as ApiResult;
 
+      if (response.status === 401) {
+        window.location.href = "/login";
+        return;
+      }
       if (!response.ok || result.error) {
         throw new Error(result.error ?? "Request failed.");
       }
@@ -383,6 +398,11 @@ export function DashboardClient({
     } finally {
       setBusyAction(undefined);
     }
+  }
+
+  async function logout() {
+    await fetch("/api/auth/logout", { method: "POST" });
+    window.location.href = "/login";
   }
 
   const authorization = snapshot.authorization;
@@ -414,8 +434,12 @@ export function DashboardClient({
           <p className="subtitle">{t.subtitle}</p>
         </div>
         <div className="top-actions">
+          <span className="pill">{snapshot.user.email}</span>
           <button className="secondary compact demo-hidden" onClick={() => setLang(lang === "zh" ? "en" : "zh")}>
             {t.language}
+          </button>
+          <button className="secondary compact" onClick={logout}>
+            {t.logout}
           </button>
           <span className="pill">
             {snapshot.network.name} · {snapshot.pricing.creditsPerUsdc} 积分 / USDC

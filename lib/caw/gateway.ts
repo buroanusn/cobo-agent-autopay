@@ -58,7 +58,7 @@ export type CawGateway = {
   connectWallet(input: {
     userId: string;
     walletAddress: string;
-  }): Promise<{ connectionId: string; walletAddress: string }>;
+  }): Promise<{ connectionId: string; walletId?: string; walletAddress: string }>;
   createPact(input: CreatePactInput): Promise<{
     pactId: string;
     status: "active" | "pending_user_approval";
@@ -115,6 +115,7 @@ class MockCawGateway implements CawGateway {
   async connectWallet(input: { userId: string; walletAddress: string }) {
     return {
       connectionId: `mock_conn_${input.userId}`,
+      walletId: `mock_wallet_${input.userId}`,
       walletAddress: input.walletAddress
     };
   }
@@ -195,6 +196,7 @@ class HttpCawGateway implements CawGateway {
 
     return {
       connectionId: this.walletId,
+      walletId: this.walletId,
       walletAddress:
         stringField(source, "address", "") ||
         stringField(source, "addr", "") ||

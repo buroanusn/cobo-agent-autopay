@@ -3,7 +3,6 @@ import {
   DEFAULT_CREDIT_ACCOUNT,
   DEFAULT_GUARDRAILS,
   DEFAULT_SPEND_POLICY,
-  DEMO_CAW_WALLET,
   DEMO_USER_EMAIL,
   DEMO_USER_ID,
   getConfiguredCawChainId,
@@ -83,6 +82,36 @@ function createInitialDb(): AgentDb {
 export const db = globalStore.__agentToTokenDb ?? createInitialDb();
 globalStore.__agentToTokenDb = db;
 
+export function createUserWithDefaults(email: string) {
+  const createdAt = nowIso();
+  const id = createId("usr");
+  const user: User = {
+    id,
+    email,
+    createdAt
+  };
+  const account: CreditAccount = {
+    userId: id,
+    balanceCredits: DEFAULT_CREDIT_ACCOUNT.openingBalanceCredits,
+    lowBalanceThresholdCredits: DEFAULT_CREDIT_ACCOUNT.lowBalanceThresholdCredits,
+    autoTopupCredits: DEFAULT_CREDIT_ACCOUNT.autoTopupCredits,
+    updatedAt: createdAt
+  };
+
+  db.users.set(id, user);
+  db.creditAccounts.set(id, account);
+  db.ledgerEntries.push({
+    id: createId("led"),
+    userId: id,
+    type: "opening_grant",
+    creditsDelta: DEFAULT_CREDIT_ACCOUNT.openingBalanceCredits,
+    balanceAfterCredits: DEFAULT_CREDIT_ACCOUNT.openingBalanceCredits,
+    createdAt
+  });
+
+  return user;
+}
+
 export function requireUser(userId: string) {
   const user = db.users.get(userId);
   if (!user) {
@@ -110,6 +139,12 @@ export function snapshotForUser(userId: string): DashboardSnapshot {
   const user = requireUser(userId);
   const account = requireCreditAccount(userId);
   const authorization = getActiveAuthorization(userId);
+  const publicAuthorization = authorization
+    ? {
+        ...authorization,
+        pactApiKey: undefined
+      }
+    : undefined;
   const chain = getConfiguredChain();
   const topupOrders = [...db.topupOrders.values()]
     .filter((order) => order.userId === userId)
@@ -124,7 +159,7 @@ export function snapshotForUser(userId: string): DashboardSnapshot {
   return {
     user,
     account,
-    authorization,
+    authorization: publicAuthorization,
     pairingSession: db.pairingSessions.get(userId),
     guardrails: {
       singleLimitUsdcMinor:
@@ -132,7 +167,7 @@ export function snapshotForUser(userId: string): DashboardSnapshot {
       dailyLimitUsdcMinor:
         authorization?.dailyLimitUsdcMinor ?? DEFAULT_SPEND_POLICY.dailyLimitUsdcMinor,
       reviewThresholdUsdcMinor: DEFAULT_GUARDRAILS.reviewThresholdUsdcMinor,
-      allowedAddresses: [user.cawWalletAddress ?? DEMO_CAW_WALLET],
+      allowedAddresses: user.cawWalletAddress ? [user.cawWalletAddress] : [],
       allowedChains: [getConfiguredCawChainId()],
       generatedBy: "system_default",
       updatedAt: authorization?.createdAt ?? user.createdAt
