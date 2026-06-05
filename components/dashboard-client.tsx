@@ -466,6 +466,47 @@ export function DashboardClient({
           </div>
         </div>
 
+        <div className="panel span-12">
+          <div className="panel-title">
+            <h2>CAW 手机配对码</h2>
+            <span className={`status ${snapshot.pairingSession ? "active" : "blocked"}`}>
+              {snapshot.pairingSession ? snapshot.pairingSession.status : "未生成"}
+            </span>
+          </div>
+          <div className="pairing-box">
+            <div>
+              <span className="metric-label">配对码</span>
+              <div className="pairing-code">{snapshot.pairingSession?.code ?? "点击生成配对码"}</div>
+            </div>
+            <div className="pairing-help">
+              <p>1. 点击“生成配对码”。</p>
+              <p>2. 打开手机 Cobo Agentic Wallet App。</p>
+              <p>3. 输入这里显示的 8 位配对码。</p>
+              <p>4. 配对后点击“连接 CAW”。</p>
+            </div>
+          </div>
+          <div className="actions">
+            <button
+              onClick={() => callAction("pair", "/api/wallet/caw/pairing-code")}
+              disabled={busyAction === "pair"}
+            >
+              生成配对码
+            </button>
+            <button
+              className="secondary"
+              onClick={() => callAction("connect", "/api/wallet/caw/connect")}
+              disabled={busyAction === "connect" || walletConnected}
+            >
+              连接 CAW
+            </button>
+          </div>
+          <p className="metric-label">
+            {snapshot.pairingSession
+              ? `过期时间：${formatTime(snapshot.pairingSession.expiresAt)}`
+              : "如果新电脑/新钱包还没有配对，先从这里生成验证码。"}
+          </p>
+        </div>
+
         <div className="panel span-8">
           <div className="panel-title">
             <h2>{t.credits}</h2>
@@ -611,14 +652,14 @@ export function DashboardClient({
           </div>
           <div className="actions">
             <button
-              className="secondary"
+              className="secondary demo-hidden"
               onClick={() => callAction("pair", "/api/wallet/caw/pairing-code")}
               disabled={busyAction === "pair"}
             >
               {t.pair}
             </button>
             <button
-              className="secondary"
+              className="secondary demo-hidden"
               onClick={() => callAction("connect", "/api/wallet/caw/connect")}
               disabled={busyAction === "connect" || walletConnected}
             >

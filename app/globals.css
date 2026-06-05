@@ -211,6 +211,43 @@ button.compact {
   line-height: 1.45;
 }
 
+.pairing-box {
+  display: grid;
+  grid-template-columns: minmax(220px, 360px) 1fr;
+  gap: 16px;
+  align-items: stretch;
+}
+
+.pairing-code {
+  margin-top: 8px;
+  border: 1px dashed rgba(29, 138, 95, 0.34);
+  border-radius: 20px;
+  padding: 22px;
+  background:
+    linear-gradient(135deg, rgba(255, 255, 255, 0.88), rgba(232, 246, 238, 0.88));
+  color: var(--primary-strong);
+  font-size: clamp(30px, 6vw, 56px);
+  font-weight: 850;
+  letter-spacing: 0.08em;
+  text-align: center;
+}
+
+.pairing-help {
+  display: grid;
+  align-content: center;
+  gap: 6px;
+  border: 1px solid rgba(205, 228, 215, 0.9);
+  border-radius: 18px;
+  padding: 14px;
+  background: #f8fffa;
+}
+
+.pairing-help p {
+  margin: 0;
+  color: var(--muted);
+  line-height: 1.45;
+}
+
 .span-8 {
   grid-column: span 8;
 }
@@ -500,6 +537,10 @@ button.compact {
 
   .next-step {
     display: grid;
+  }
+
+  .pairing-box {
+    grid-template-columns: 1fr;
   }
 
   .status-grid {
