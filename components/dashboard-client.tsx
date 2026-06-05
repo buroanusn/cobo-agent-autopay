@@ -477,7 +477,7 @@ export function DashboardClient({
           <div className="pairing-box">
             <div>
               <span className="metric-label">{walletPaired ? "当前 CAW 钱包" : "配对码"}</span>
-              <div className="pairing-code">
+              <div className={`pairing-code ${walletPaired ? "wallet-address-code" : ""}`}>
                 {walletPaired
                   ? cawStatus?.runtime.walletAddress ?? "已配对"
                   : snapshot.pairingSession?.code ?? "点击生成配对码"}
@@ -522,6 +522,20 @@ export function DashboardClient({
               ? `过期时间：${formatTime(snapshot.pairingSession.expiresAt)}`
               : "如果新电脑/新钱包还没有配对，先从这里生成验证码。"}
           </p>
+        </div>
+
+        <div className="panel span-12">
+          <div className="panel-title">
+            <h2>新用户怎么接入 CAW</h2>
+            <span className="status blocked">部署方操作</span>
+          </div>
+          <div className="pairing-help new-user-guide">
+            <p>1. 当前版本是单钱包部署模式：一份部署只读取一个后端 CAW Agent Wallet。</p>
+            <p>2. 给另一个人使用时，先在服务器或本机用 CAW CLI 创建新的 Agent Wallet。</p>
+            <p>3. 把新钱包的 API URL、API Key、Wallet ID、钱包地址写入该部署的环境变量。</p>
+            <p>4. 重启网站后，页面会变成“未配对”，再生成配对码给新用户手机 CAW App 输入。</p>
+            <p>5. 配对成功后点击“连接 CAW”，再让用户在手机里批准 Pact 和 USDC 授权。</p>
+          </div>
         </div>
 
         <div className="panel span-8">

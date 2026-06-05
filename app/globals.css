@@ -232,6 +232,13 @@ button.compact {
   text-align: center;
 }
 
+.wallet-address-code {
+  overflow-wrap: anywhere;
+  font-size: clamp(16px, 3vw, 26px);
+  line-height: 1.35;
+  letter-spacing: 0.02em;
+}
+
 .pairing-help {
   display: grid;
   align-content: center;
@@ -240,6 +247,10 @@ button.compact {
   border-radius: 18px;
   padding: 14px;
   background: #f8fffa;
+}
+
+.new-user-guide {
+  align-content: stretch;
 }
 
 .pairing-help p {

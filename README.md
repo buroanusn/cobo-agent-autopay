@@ -42,6 +42,10 @@ The default runtime expects real CAW credentials and real Base Sepolia calls:
 
 Offline mock mode requires both `CAW_MODE=mock` and `CAW_ALLOW_MOCK=true`.
 
+For a new user or a separate deployment, create a separate CAW Agent Wallet and
+switch the deployment environment variables before generating the pairing code.
+See `docs/new-user-caw-pairing.md`.
+
 ## Pact Drafter
 
 The dashboard's "Generate Pact Plan" button runs a local agent drafter before
