@@ -8,6 +8,14 @@ type ApiResult = {
   ok?: boolean;
   snapshot?: DashboardSnapshot;
   error?: string;
+  resource?: X402Resource;
+  paymentVerified?: boolean;
+  payment?: {
+    orderId: string;
+    txHash?: string;
+    amountUsdcMinor: number;
+    status: string;
+  };
   preview?: CawPactPreview;
   status?: string;
   reason?: string;
@@ -39,6 +47,14 @@ type ApiResult = {
     paymentHeader: string;
     resourcePath: string;
   };
+};
+
+type X402Resource = {
+  insight: string;
+  account: string;
+  chain: string;
+  creditsPerUsdc: number;
+  unlockedAt: string;
 };
 
 type CawPactPreview = {
@@ -115,6 +131,7 @@ const copy = {
     runAgent: "运行 Agent",
     topupNow: "立即充值",
     x402Pay: "x402 资源支付",
+    x402Unlock: "解锁资源",
     prompt: "Agent 任务说明",
     authorization: "CAW 授权",
     notConnected: "未连接",
@@ -183,6 +200,8 @@ const copy = {
     running: "运行中...",
     topupOk: "充值",
     x402PayOk: "x402 支付",
+    x402UnlockOk: "x402 资源已解锁。",
+    x402UnlockPending: "x402 支付还在确认中，请稍后重试解锁。",
     connectOk: "CAW 钱包已连接。",
     authorizeOk: "Pact 已提交。请在 Cobo Agentic Wallet App 内审批，审批后点击刷新 Pact。",
     pactPreviewOk: "Pact 计划已生成，请确认内容后提交到 Cobo App 审批。",
@@ -225,6 +244,7 @@ const copy = {
     runAgent: "Run Agent",
     topupNow: "Top Up Now",
     x402Pay: "Pay x402 Resource",
+    x402Unlock: "Unlock Resource",
     prompt: "Agent task prompt",
     authorization: "CAW Authorization",
     notConnected: "not connected",
@@ -293,6 +313,8 @@ const copy = {
     running: "Running...",
     topupOk: "Top-up",
     x402PayOk: "x402 payment",
+    x402UnlockOk: "x402 resource unlocked.",
+    x402UnlockPending: "x402 payment is still confirming. Retry unlock shortly.",
     connectOk: "CAW wallet connected.",
     authorizeOk: "Pact submitted. Approve it in Cobo Agentic Wallet App, then refresh Pact.",
     pactPreviewOk: "Pact plan generated. Review it before submitting for Cobo App approval.",
@@ -346,6 +368,8 @@ export function DashboardClient({
   const [monthlyLimitUsdc, setMonthlyLimitUsdc] = useState("20");
   const [validDays, setValidDays] = useState("7");
   const [cawWalletId, setCawWalletId] = useState(initialSnapshot.user.cawWalletId ?? "");
+  const [x402Proof, setX402Proof] = useState("");
+  const [x402Resource, setX402Resource] = useState<X402Resource | undefined>(undefined);
 
   useEffect(() => {
     void refresh();
@@ -406,7 +430,60 @@ export function DashboardClient({
         setPactPreview(undefined);
       }
 
+      if (action === "x402-pay") {
+        const proof = result.x402?.paymentProof ?? result.order?.orderId;
+        if (proof) {
+          setX402Proof(proof);
+          setX402Resource(undefined);
+        }
+      }
+
       setMessage(statusMessage(action, result, lang));
+      void refresh();
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "Request failed.");
+    } finally {
+      setBusyAction(undefined);
+    }
+  }
+
+  async function unlockX402Resource(proof: string) {
+    if (!proof) {
+      return;
+    }
+
+    setBusyAction("x402-unlock");
+    setMessage(undefined);
+    setError(undefined);
+
+    try {
+      const response = await fetch("/api/x402/resource", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-payment-proof": proof
+        },
+        body: JSON.stringify({ paymentProof: proof })
+      });
+      const result = (await response.json()) as ApiResult;
+
+      if (response.status === 401) {
+        window.location.href = "/login";
+        return;
+      }
+      if (response.status === 402) {
+        setMessage(copy[lang].x402UnlockPending);
+        void refresh();
+        return;
+      }
+      if (!response.ok || result.error) {
+        throw new Error(result.error ?? "Request failed.");
+      }
+
+      if (result.resource) {
+        setX402Resource(result.resource);
+      }
+      setMessage(copy[lang].x402UnlockOk);
       void refresh();
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "Request failed.");
@@ -434,6 +511,8 @@ export function DashboardClient({
   const nextStep = getNextStep(missingItems);
   const recentOrders = snapshot.topupOrders.slice(0, 6);
   const recentLedgerEntries = snapshot.ledgerEntries.slice(0, 6);
+  const latestX402Order = snapshot.topupOrders.find((order) => order.reason === "x402_resource");
+  const activeX402Proof = x402Proof || latestX402Order?.orderId || "";
   const pactBody = buildPactBody({
     intent: pactIntent,
     singleLimitUsdc,
@@ -628,6 +707,40 @@ export function DashboardClient({
             >
               {t.x402Pay}
             </button>
+          </div>
+
+          <div className="x402-box">
+            <div className="event-line">
+              <strong>x402</strong>
+              <span className={`status ${latestX402Order?.status === "credited" ? "active" : activeX402Proof ? "blocked" : ""}`}>
+                {latestX402Order?.status ?? "未支付"}
+              </span>
+            </div>
+            <div className="event-meta">
+              <span>价格：0.01 USDC</span>
+              {activeX402Proof ? <span>proof: {shortHash(activeX402Proof)}</span> : null}
+            </div>
+            {x402Resource ? (
+              <div className="x402-resource">
+                <strong>{x402Resource.insight}</strong>
+                <span>
+                  {x402Resource.chain} · {formatDateTime(x402Resource.unlockedAt)}
+                </span>
+              </div>
+            ) : (
+              <span className="metric-label">
+                支付提交后用 proof 解锁资源；如果链上还在确认，可以稍后重试。
+              </span>
+            )}
+            <div className="actions compact-actions">
+              <button
+                className="secondary compact"
+                onClick={() => unlockX402Resource(activeX402Proof)}
+                disabled={!activeX402Proof || busyAction === "x402-unlock"}
+              >
+                {busyAction === "x402-unlock" ? "验证中..." : t.x402Unlock}
+              </button>
+            </div>
           </div>
 
           <label className="stack" style={{ marginTop: 14 }}>

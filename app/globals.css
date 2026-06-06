@@ -385,6 +385,34 @@ a.button-link.compact {
   margin-top: 16px;
 }
 
+.compact-actions {
+  margin-top: 10px;
+}
+
+.x402-box {
+  display: grid;
+  gap: 8px;
+  margin-top: 14px;
+  border: 1px solid rgba(205, 228, 215, 0.9);
+  border-radius: 16px;
+  padding: 12px;
+  background: #f9fffb;
+}
+
+.x402-resource {
+  display: grid;
+  gap: 4px;
+  border: 1px solid rgba(29, 138, 95, 0.18);
+  border-radius: 12px;
+  padding: 10px;
+  background: #f0fbf5;
+}
+
+.x402-resource span {
+  color: var(--muted);
+  font-size: 13px;
+}
+
 .pact-form {
   display: grid;
   gap: 10px;
