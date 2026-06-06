@@ -25,7 +25,8 @@ import type { ChainEventRecord, CreditRepository } from "@/lib/store/repository"
 const pendingTopupStatuses: TopupOrder["status"][] = [
   "pending_policy",
   "caw_submitted",
-  "chain_pending"
+  "chain_pending",
+  "pending_approval"
 ];
 
 export const memoryRepository: CreditRepository = {
@@ -104,6 +105,11 @@ export const memoryRepository: CreditRepository = {
     return [...db.topupOrders.values()].find(
       (order) => order.userId === userId && pendingTopupStatuses.includes(order.status)
     );
+  },
+  async listPendingTopupOrders(userId: string): Promise<TopupOrder[]> {
+    return [...db.topupOrders.values()]
+      .filter((order) => order.userId === userId && pendingTopupStatuses.includes(order.status))
+      .sort((left, right) => left.createdAt.localeCompare(right.createdAt));
   },
   async createTopupOrder(
     input: Omit<TopupOrder, "id" | "orderId" | "onchainOrderId" | "createdAt" | "updatedAt">

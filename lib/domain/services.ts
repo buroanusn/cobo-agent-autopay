@@ -1,4 +1,9 @@
-import { createCawGateway, getCawRuntimeStatus } from "@/lib/caw/gateway";
+import {
+  createCawGateway,
+  getCawRuntimeStatus,
+  type CawGateway,
+  type CawTransactionRecord
+} from "@/lib/caw/gateway";
 import { draftCawPactFromIntent } from "@/lib/caw/pact-drafter";
 import {
   CREDITS_PER_USDC,
@@ -33,6 +38,7 @@ export type CawPactPreview = {
 };
 
 export async function getDashboardSnapshot(userId = DEMO_USER_ID) {
+  await refreshPendingTopupOrders({ userId });
   return getCreditRepository().snapshotForUser(userId);
 }
 
@@ -669,11 +675,24 @@ export async function verifyX402ResourcePayment(input: {
     return { ok: false as const, reason: "missing_payment_proof" };
   }
 
-  const order =
+  let order =
     (await repository.findTopupOrderByOrderId({ orderId: proof })) ??
     (isTransactionHash(proof)
       ? await repository.findTopupOrderByTxHash({ userId, txHash: proof })
       : undefined);
+
+  if (!order || order.userId !== userId) {
+    return { ok: false as const, reason: "payment_not_found" };
+  }
+
+  if (order.status !== "credited") {
+    await refreshPendingTopupOrders({ userId });
+    order =
+      (await repository.findTopupOrderByOrderId({ orderId: proof })) ??
+      (isTransactionHash(proof)
+        ? await repository.findTopupOrderByTxHash({ userId, txHash: proof })
+        : undefined);
+  }
 
   if (!order || order.userId !== userId) {
     return { ok: false as const, reason: "payment_not_found" };
@@ -729,6 +748,79 @@ export async function verifyX402ResourcePayment(input: {
   };
 }
 
+export async function refreshPendingTopupOrders(input: { userId?: string }) {
+  const repository = getCreditRepository();
+  const userId = input.userId ?? DEMO_USER_ID;
+  const user = await repository.requireUser(userId).catch(() => undefined);
+  if (!user) {
+    return {
+      status: "skipped" as const,
+      reason: "missing_user",
+      refreshed: 0,
+      settled: 0,
+      failed: 0
+    };
+  }
+  const walletId = getUserCawWalletId(user);
+  const pendingOrders = await repository.listPendingTopupOrders(userId);
+
+  if (pendingOrders.length === 0) {
+    return {
+      status: "skipped" as const,
+      reason: "no_pending_orders",
+      refreshed: 0,
+      settled: 0,
+      failed: 0
+    };
+  }
+
+  if (!walletId) {
+    return {
+      status: "skipped" as const,
+      reason: "missing_caw_wallet_id",
+      refreshed: 0,
+      settled: 0,
+      failed: 0
+    };
+  }
+
+  let gateway: CawGateway;
+  try {
+    gateway = createCawGateway();
+  } catch (error) {
+    return {
+      status: "skipped" as const,
+      reason: error instanceof Error ? error.message : "caw_gateway_unavailable",
+      refreshed: 0,
+      settled: 0,
+      failed: 0
+    };
+  }
+  const results = [];
+
+  for (const order of pendingOrders) {
+    results.push(
+      await refreshSingleTopupOrder({
+        order,
+        walletId,
+        gateway
+      }).catch((error: unknown) => ({
+        status: "refresh_error" as const,
+        orderId: order.orderId,
+        reason: error instanceof Error ? error.message : "unknown_refresh_error"
+      }))
+    );
+  }
+
+  return {
+    status: "refreshed" as const,
+    refreshed: results.filter((result) => result.status !== "missing_caw_record").length,
+    settled: results.filter((result) => result.status === "credited").length,
+    failed: results.filter((result) => result.status === "failed").length,
+    results
+  };
+}
+
 export async function executeCreditsTopup(input: {
   userId?: string;
   reason?: AutoTopupReason;
@@ -740,6 +832,7 @@ export async function executeCreditsTopup(input: {
   const userId = input.userId ?? DEMO_USER_ID;
   const reason = input.reason ?? "low_balance";
   const user = await repository.requireUser(userId);
+  await refreshPendingTopupOrders({ userId });
   const account = await repository.requireCreditAccount(userId);
 
   if (input.skipIfBalanceAboveThreshold && account.balanceCredits >= account.lowBalanceThresholdCredits) {
@@ -959,6 +1052,140 @@ export async function settleCreditsPurchase(input: {
     order,
     snapshot: await repository.snapshotForUser(order.userId)
   };
+}
+
+async function refreshSingleTopupOrder(input: {
+  order: TopupOrder;
+  walletId: string;
+  gateway: CawGateway;
+}) {
+  const repository = getCreditRepository();
+  const order = input.order;
+
+  if (isStalePolicyPendingOrder(order)) {
+    order.status = "failed";
+    order.failureReason = "stale_pending_policy_order";
+    order.updatedAt = repository.nowIso();
+    await repository.updateTopupOrder(order);
+    return {
+      status: "failed" as const,
+      orderId: order.orderId,
+      reason: order.failureReason
+    };
+  }
+
+  const record = await input.gateway.getTransactionByRequestId({
+    walletId: input.walletId,
+    requestId: order.orderId
+  });
+
+  if (!record) {
+    return {
+      status: "missing_caw_record" as const,
+      orderId: order.orderId
+    };
+  }
+
+  const txHash = record.txHash && isTransactionHash(record.txHash) ? record.txHash : undefined;
+  if (txHash && order.txHash !== txHash) {
+    order.txHash = txHash;
+  }
+
+  const cawStatus = classifyCawTransaction(record);
+  if (cawStatus === "failed") {
+    order.status = "failed";
+    order.failureReason = `caw_${normalizeCawStatus(record)}`;
+    order.updatedAt = repository.nowIso();
+    await repository.updateTopupOrder(order);
+    return {
+      status: "failed" as const,
+      orderId: order.orderId,
+      reason: order.failureReason
+    };
+  }
+
+  if (cawStatus === "pending_approval") {
+    order.status = "pending_approval";
+    order.updatedAt = repository.nowIso();
+    await repository.updateTopupOrder(order);
+    return {
+      status: "pending_approval" as const,
+      orderId: order.orderId
+    };
+  }
+
+  if (cawStatus === "processing") {
+    order.status = txHash ? "chain_pending" : "caw_submitted";
+    order.updatedAt = repository.nowIso();
+    await repository.updateTopupOrder(order);
+    return {
+      status: order.status,
+      orderId: order.orderId
+    };
+  }
+
+  order.status = "chain_pending";
+  order.updatedAt = repository.nowIso();
+  await repository.updateTopupOrder(order);
+
+  if (!txHash) {
+    return {
+      status: "chain_pending" as const,
+      orderId: order.orderId,
+      reason: "missing_transaction_hash"
+    };
+  }
+
+  const receipt = await verifyCreditsPaymentReceipt(order);
+  if (!receipt.ok) {
+    return {
+      status: "chain_pending" as const,
+      orderId: order.orderId,
+      reason: receipt.reason
+    };
+  }
+
+  const settlement = await settleCreditsPurchase({
+    orderId: order.orderId,
+    onchainOrderId: order.onchainOrderId,
+    amountUsdcMinor: order.amountUsdcMinor,
+    txHash,
+    eventId: `caw:${record.id}:${order.orderId}`
+  });
+
+  return {
+    status: settlement.status,
+    orderId: order.orderId
+  };
+}
+
+function classifyCawTransaction(record: CawTransactionRecord) {
+  if (record.statusCode === 900 || ["success", "completed"].includes(normalizeCawStatus(record))) {
+    return "success" as const;
+  }
+  if (
+    record.statusCode !== undefined &&
+    record.statusCode >= 901 &&
+    record.statusCode <= 903
+  ) {
+    return "failed" as const;
+  }
+
+  const status = normalizeCawStatus(record);
+  if (["failed", "rejected", "cancelled", "canceled"].includes(status)) {
+    return "failed" as const;
+  }
+  if (status.includes("approval") || status.includes("authorization")) {
+    return "pending_approval" as const;
+  }
+  return "processing" as const;
+}
+
+function normalizeCawStatus(record: CawTransactionRecord) {
+  return `${record.status} ${record.subStatus ?? ""}`
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "");
 }
 
 async function checkAuthorizationPolicy(userId: string, amountUsdcMinor: number) {

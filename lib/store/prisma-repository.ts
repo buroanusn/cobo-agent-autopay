@@ -25,7 +25,8 @@ import type { ChainEventRecord, CreditRepository } from "@/lib/store/repository"
 const pendingTopupStatuses: TopupOrder["status"][] = [
   "pending_policy",
   "caw_submitted",
-  "chain_pending"
+  "chain_pending",
+  "pending_approval"
 ];
 
 export const prismaRepository: CreditRepository = {
@@ -308,6 +309,16 @@ export const prismaRepository: CreditRepository = {
       orderBy: { createdAt: "asc" }
     });
     return order ? mapTopupOrder(order) : undefined;
+  },
+  async listPendingTopupOrders(userId: string): Promise<TopupOrder[]> {
+    const orders = await prisma.topupOrder.findMany({
+      where: {
+        userId,
+        status: { in: pendingTopupStatuses }
+      },
+      orderBy: { createdAt: "asc" }
+    });
+    return orders.map(mapTopupOrder);
   },
   async createTopupOrder(
     input: Omit<TopupOrder, "id" | "orderId" | "onchainOrderId" | "createdAt" | "updatedAt">

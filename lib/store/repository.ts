@@ -34,6 +34,7 @@ export type CreditRepository = {
   createUsageEvent(input: Omit<AgentUsageEvent, "id" | "createdAt">): Promise<AgentUsageEvent>;
   appendLedgerEntry(input: Omit<LedgerEntry, "id" | "createdAt">): Promise<LedgerEntry>;
   findPendingTopupOrder(userId: string): Promise<TopupOrder | undefined>;
+  listPendingTopupOrders(userId: string): Promise<TopupOrder[]>;
   createTopupOrder(
     input: Omit<TopupOrder, "id" | "orderId" | "onchainOrderId" | "createdAt" | "updatedAt">
   ): Promise<TopupOrder>;

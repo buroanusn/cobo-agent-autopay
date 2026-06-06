@@ -116,6 +116,10 @@ export type CawGateway = {
     walletId?: string;
     limit?: number;
   }): Promise<CawTransactionRecord[]>;
+  getTransactionByRequestId(input: {
+    walletId?: string;
+    requestId: string;
+  }): Promise<CawTransactionRecord | undefined>;
 };
 
 export type CawRuntimeStatus = {
@@ -199,6 +203,10 @@ class MockCawGateway implements CawGateway {
 
   async listTransactions() {
     return [];
+  }
+
+  async getTransactionByRequestId() {
+    return undefined;
   }
 }
 
@@ -410,29 +418,24 @@ class HttpCawGateway implements CawGateway {
       true
     );
 
-    return response.data.result.map((record) => {
-      const extTxHash = record.ext_transactions?.find((tx) => tx.transaction_hash)?.transaction_hash;
-      return {
-        id: record.id,
-        walletId: record.wallet_id,
-        pactId: record.pact_id,
-        type: String(record.type),
-        requestType: record.request_type ? String(record.request_type) : undefined,
-        chainId: record.chain_id,
-        tokenId: record.token_id,
-        from: record.src_address,
-        to: record.dst_address,
-        amount: record.amount,
-        status: record.status_display ?? String(record.status),
-        statusCode: record.status,
-        subStatus: record.sub_status,
-        txHash: record.transaction_hash || extTxHash,
-        requestId: record.request_id,
-        description: record.description,
-        createdAt: record.created_at,
-        updatedAt: record.updated_at
-      };
-    });
+    return response.data.result.map(mapCawTransactionRecord);
+  }
+
+  async getTransactionByRequestId(input: { walletId?: string; requestId: string }) {
+    const walletId = this.resolveWalletId(input.walletId);
+    try {
+      const response = await this.transactionRecordsApi().getUserTransactionByRequestId(
+        walletId,
+        input.requestId,
+        true
+      );
+      return mapCawTransactionRecord(response.data.result);
+    } catch (error) {
+      if (isHttpStatus(error, 404)) {
+        return undefined;
+      }
+      throw error;
+    }
   }
 
   private ownerConfig() {
@@ -477,6 +480,61 @@ function clampLimit(limit: number | undefined) {
     return 50;
   }
   return Math.min(200, Math.max(1, Math.floor(limit)));
+}
+
+function mapCawTransactionRecord(record: {
+  id: string;
+  wallet_id: string;
+  pact_id?: string;
+  type: unknown;
+  request_type?: unknown;
+  chain_id: string;
+  token_id: string;
+  src_address: string;
+  dst_address: string;
+  amount: string;
+  status: number;
+  status_display?: string;
+  sub_status?: string;
+  transaction_hash?: string;
+  request_id?: string;
+  description?: string;
+  created_at: string;
+  updated_at: string;
+  ext_transactions?: Array<{ transaction_hash?: string }>;
+}): CawTransactionRecord {
+  const extTxHash = record.ext_transactions?.find((tx) => tx.transaction_hash)?.transaction_hash;
+  return {
+    id: record.id,
+    walletId: record.wallet_id,
+    pactId: record.pact_id,
+    type: String(record.type),
+    requestType: record.request_type ? String(record.request_type) : undefined,
+    chainId: record.chain_id,
+    tokenId: record.token_id,
+    from: record.src_address,
+    to: record.dst_address,
+    amount: record.amount,
+    status: record.status_display ?? String(record.status),
+    statusCode: record.status,
+    subStatus: record.sub_status,
+    txHash: record.transaction_hash || extTxHash,
+    requestId: record.request_id,
+    description: record.description,
+    createdAt: record.created_at,
+    updatedAt: record.updated_at
+  };
+}
+
+function isHttpStatus(error: unknown, status: number) {
+  if (!isRecord(error) || !isRecord(error.response)) {
+    return false;
+  }
+  return error.response.status === status;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
 }
 
 export function createCawGateway(): CawGateway {
