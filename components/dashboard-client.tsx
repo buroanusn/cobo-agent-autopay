@@ -331,6 +331,7 @@ export function DashboardClient({
   const [dailyLimitUsdc, setDailyLimitUsdc] = useState("5");
   const [monthlyLimitUsdc, setMonthlyLimitUsdc] = useState("20");
   const [validDays, setValidDays] = useState("7");
+  const [cawWalletId, setCawWalletId] = useState(initialSnapshot.user.cawWalletId ?? "");
 
   useEffect(() => {
     void refresh();
@@ -410,7 +411,8 @@ export function DashboardClient({
   const account = snapshot.account;
   const guardrails = snapshot.guardrails;
   const stats = snapshot.paymentStats;
-  const walletConnected = Boolean(snapshot.user.cawWalletAddress);
+  const walletProfileBound = Boolean(snapshot.user.cawWalletId && snapshot.user.cawWalletAddress);
+  const selectedCawWalletId = cawWalletId.trim() || cawStatus?.runtime.walletId || snapshot.user.cawWalletId || "";
   const walletPaired = Boolean(cawStatus?.runtime.walletPaired);
   const missingItems = cawStatus?.missing.map(formatMissingItem) ?? [];
   const realPactReady = Boolean(cawStatus) && !missingItems.includes("真实 CAW Pact 授权");
@@ -493,10 +495,26 @@ export function DashboardClient({
 
         <div className="panel span-12">
           <div className="panel-title">
-            <h2>{walletPaired ? "CAW 钱包已配对" : "CAW 手机配对码"}</h2>
+            <h2>{walletPaired ? "CAW 钱包已配对" : "CAW Wallet 绑定与配对"}</h2>
             <span className={`status ${walletPaired || snapshot.pairingSession ? "active" : "blocked"}`}>
               {walletPaired ? "已完成" : snapshot.pairingSession ? snapshot.pairingSession.status : "未生成"}
             </span>
+          </div>
+          <div className="wallet-profile-form">
+            <label>
+              <span className="metric-label">CAW Wallet UUID</span>
+              <input
+                value={cawWalletId}
+                placeholder={snapshot.user.cawWalletId ?? cawStatus?.runtime.walletId ?? "输入该用户的 CAW Wallet UUID"}
+                onChange={(event) => setCawWalletId(event.target.value)}
+                disabled={walletProfileBound}
+              />
+            </label>
+            <div className="pairing-help">
+              <p>1. 每个登录用户绑定自己的 CAW Wallet UUID，绑定后写入数据库。</p>
+              <p>2. 后续 Pact、approve、支付和状态查询都会使用这个用户自己的 CAW wallet。</p>
+              <p>3. 同一个 CAW wallet 不能绑定到多个应用用户。</p>
+            </div>
           </div>
           <div className="pairing-box">
             <div>
@@ -527,16 +545,20 @@ export function DashboardClient({
           <div className="actions">
             <button
               onClick={() => callAction("pair", "/api/wallet/caw/pairing-code")}
-              disabled={busyAction === "pair" || walletPaired}
+              disabled={busyAction === "pair" || walletPaired || !walletProfileBound}
             >
               {walletPaired ? "已配对，无需生成" : "生成配对码"}
             </button>
             <button
               className="secondary"
-              onClick={() => callAction("connect", "/api/wallet/caw/connect")}
-              disabled={busyAction === "connect" || walletConnected}
+              onClick={() =>
+                callAction("connect", "/api/wallet/caw/connect", {
+                  cawWalletId: selectedCawWalletId
+                })
+              }
+              disabled={busyAction === "connect" || walletProfileBound || !selectedCawWalletId}
             >
-              连接 CAW
+              {walletProfileBound ? "已绑定 CAW" : "绑定 CAW Wallet"}
             </button>
           </div>
           <p className="metric-label">
@@ -546,20 +568,6 @@ export function DashboardClient({
               ? `过期时间：${formatTime(snapshot.pairingSession.expiresAt)}`
               : "如果新电脑/新钱包还没有配对，先从这里生成验证码。"}
           </p>
-        </div>
-
-        <div className="panel span-12">
-          <div className="panel-title">
-            <h2>新用户怎么接入 CAW</h2>
-            <span className="status blocked">部署方操作</span>
-          </div>
-          <div className="pairing-help new-user-guide">
-            <p>1. 当前版本是单钱包部署模式：一份部署只读取一个后端 CAW Agent Wallet。</p>
-            <p>2. 给另一个人使用时，先在服务器或本机用 CAW CLI 创建新的 Agent Wallet。</p>
-            <p>3. 把新钱包的 API URL、API Key、Wallet ID、钱包地址写入该部署的环境变量。</p>
-            <p>4. 重启网站后，页面会变成“未配对”，再生成配对码给新用户手机 CAW App 输入。</p>
-            <p>5. 配对成功后点击“连接 CAW”，再让用户在手机里批准 Pact 和 USDC 授权。</p>
-          </div>
         </div>
 
         <div className="panel span-8">
@@ -715,8 +723,12 @@ export function DashboardClient({
             </button>
             <button
               className="secondary demo-hidden"
-              onClick={() => callAction("connect", "/api/wallet/caw/connect")}
-              disabled={busyAction === "connect" || walletConnected}
+              onClick={() =>
+                callAction("connect", "/api/wallet/caw/connect", {
+                  cawWalletId: selectedCawWalletId
+                })
+              }
+              disabled={busyAction === "connect" || walletProfileBound || !selectedCawWalletId}
             >
               {t.connect}
             </button>

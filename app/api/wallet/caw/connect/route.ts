@@ -5,6 +5,7 @@ import { errorJson, okJson, readJson } from "@/lib/http";
 export const dynamic = "force-dynamic";
 
 type ConnectBody = {
+  cawWalletId?: string;
   walletAddress?: string;
 };
 

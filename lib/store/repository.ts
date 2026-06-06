@@ -21,6 +21,7 @@ export type CreditRepository = {
   nowIso(): string;
   snapshotForUser(userId: string): Promise<DashboardSnapshot>;
   getOrCreateUserByEmail(email: string): Promise<User>;
+  findUserByCawWalletId(walletId: string): Promise<User | undefined>;
   findUserByCawWalletAddress(walletAddress: string): Promise<User | undefined>;
   requireUser(userId: string): Promise<User>;
   requireCreditAccount(userId: string): Promise<CreditAccount>;

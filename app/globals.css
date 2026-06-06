@@ -249,6 +249,23 @@ button.compact {
   align-items: stretch;
 }
 
+.wallet-profile-form {
+  display: grid;
+  grid-template-columns: minmax(260px, 420px) 1fr;
+  gap: 16px;
+  align-items: stretch;
+  margin-bottom: 16px;
+}
+
+.wallet-profile-form input {
+  width: 100%;
+  min-height: 42px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  padding: 0 12px;
+  background: #fff;
+}
+
 .pairing-code {
   margin-top: 8px;
   border: 1px dashed rgba(29, 138, 95, 0.34);
@@ -581,7 +598,8 @@ button.compact {
     display: grid;
   }
 
-  .pairing-box {
+  .pairing-box,
+  .wallet-profile-form {
     grid-template-columns: 1fr;
   }
 

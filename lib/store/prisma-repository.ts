@@ -160,6 +160,10 @@ export const prismaRepository: CreditRepository = {
     });
     return mapUser(created);
   },
+  async findUserByCawWalletId(walletId: string): Promise<User | undefined> {
+    const user = await prisma.user.findUnique({ where: { cawWalletId: walletId } });
+    return user ? mapUser(user) : undefined;
+  },
   async findUserByCawWalletAddress(walletAddress: string): Promise<User | undefined> {
     const user = await prisma.user.findFirst({
       where: { cawWalletAddress: { equals: walletAddress, mode: "insensitive" } }

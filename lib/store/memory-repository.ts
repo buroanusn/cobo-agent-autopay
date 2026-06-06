@@ -39,6 +39,9 @@ export const memoryRepository: CreditRepository = {
     const existing = [...db.users.values()].find((user) => user.email === normalizedEmail);
     return existing ?? createUserWithDefaults(normalizedEmail);
   },
+  async findUserByCawWalletId(walletId: string): Promise<User | undefined> {
+    return [...db.users.values()].find((user) => user.cawWalletId === walletId);
+  },
   async findUserByCawWalletAddress(walletAddress: string): Promise<User | undefined> {
     const normalizedWallet = walletAddress.toLowerCase();
     return [...db.users.values()].find(
