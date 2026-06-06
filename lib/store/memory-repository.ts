@@ -134,6 +134,17 @@ export const memoryRepository: CreditRepository = {
         candidate.orderId === input.orderId || candidate.onchainOrderId === input.onchainOrderId
     );
   },
+  async findTopupOrderByTxHash(input: {
+    userId: string;
+    txHash: string;
+  }): Promise<TopupOrder | undefined> {
+    const normalizedTxHash = input.txHash.toLowerCase();
+    return [...db.topupOrders.values()].find(
+      (candidate) =>
+        candidate.userId === input.userId &&
+        candidate.txHash?.toLowerCase() === normalizedTxHash
+    );
+  },
   async hasChainEvent(eventId: string): Promise<boolean> {
     return db.chainEventsSeen.has(eventId);
   },

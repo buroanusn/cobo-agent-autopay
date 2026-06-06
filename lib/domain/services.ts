@@ -4,16 +4,17 @@ import {
   CREDITS_PER_USDC,
   DEFAULT_SPEND_POLICY,
   DEMO_USER_ID,
+  USDC_MINOR_UNITS,
   getConfiguredCawChainId,
   getConfiguredChain
 } from "@/lib/domain/constants";
-import { creditsToUsdcMinor } from "@/lib/domain/money";
-import type { CawAuthorization, User } from "@/lib/domain/types";
+import { creditsToUsdcMinor, usdcMinorToCredits } from "@/lib/domain/money";
+import type { CawAuthorization, TopupOrder, User } from "@/lib/domain/types";
 import { getCreditRepository } from "@/lib/store";
 import { createPublicClient, formatUnits, getAddress, http } from "viem";
 import { base, baseSepolia } from "viem/chains";
 
-type AutoTopupReason = "low_balance" | "insufficient_balance" | "manual";
+type AutoTopupReason = "low_balance" | "insufficient_balance" | "manual" | "x402_resource";
 
 export type CawPactPreview = {
   intent: string;
@@ -621,6 +622,111 @@ export async function executeAutoTopup(input: {
   });
 }
 
+export function getX402ResourcePriceUsdcMinor() {
+  const configured = Number(process.env.X402_RESOURCE_PRICE_USDC_MINOR ?? USDC_MINOR_UNITS);
+  if (!Number.isFinite(configured) || configured <= 0) {
+    return USDC_MINOR_UNITS;
+  }
+  return Math.floor(configured);
+}
+
+export async function createX402ResourcePayment(input: {
+  userId?: string;
+}) {
+  const amountUsdcMinor = getX402ResourcePriceUsdcMinor();
+  const credits = Math.max(1, usdcMinorToCredits(amountUsdcMinor));
+  const topup = await executeCreditsTopup({
+    userId: input.userId,
+    reason: "x402_resource",
+    amountUsdcMinor,
+    credits,
+    skipIfBalanceAboveThreshold: false
+  });
+  const order = "order" in topup ? topup.order : undefined;
+
+  return {
+    ...topup,
+    x402: {
+      amountUsdcMinor,
+      credits,
+      paymentProof: order?.orderId,
+      paymentHeader: "x-payment-proof",
+      resourcePath: "/api/x402/resource"
+    }
+  };
+}
+
+export async function verifyX402ResourcePayment(input: {
+  userId?: string;
+  proof: string;
+}) {
+  const repository = getCreditRepository();
+  const userId = input.userId ?? DEMO_USER_ID;
+  const proof = input.proof.trim();
+  if (!proof) {
+    return { ok: false as const, reason: "missing_payment_proof" };
+  }
+
+  const order =
+    (await repository.findTopupOrderByOrderId({ orderId: proof })) ??
+    (isTransactionHash(proof)
+      ? await repository.findTopupOrderByTxHash({ userId, txHash: proof })
+      : undefined);
+
+  if (!order || order.userId !== userId) {
+    return { ok: false as const, reason: "payment_not_found" };
+  }
+
+  const requiredAmountUsdcMinor = getX402ResourcePriceUsdcMinor();
+  if (order.amountUsdcMinor < requiredAmountUsdcMinor) {
+    return {
+      ok: false as const,
+      reason: "payment_amount_too_low",
+      order,
+      requiredAmountUsdcMinor
+    };
+  }
+
+  if (order.status === "credited") {
+    return { ok: true as const, order };
+  }
+
+  if (order.txHash && isTransactionHash(order.txHash)) {
+    const receipt = await verifyCreditsPaymentReceipt(order);
+    if (!receipt.ok) {
+      return {
+        ok: false as const,
+        reason: receipt.reason,
+        order
+      };
+    }
+
+    const settlement = await settleCreditsPurchase({
+      orderId: order.orderId,
+      onchainOrderId: order.onchainOrderId,
+      amountUsdcMinor: order.amountUsdcMinor,
+      txHash: order.txHash,
+      eventId: `x402:${order.txHash}:${order.orderId}`
+    });
+
+    if ("order" in settlement && settlement.order?.status === "credited") {
+      return { ok: true as const, order: settlement.order };
+    }
+
+    return {
+      ok: false as const,
+      reason: settlement.status,
+      order
+    };
+  }
+
+  return {
+    ok: false as const,
+    reason: `payment_${order.status}`,
+    order
+  };
+}
+
 export async function executeCreditsTopup(input: {
   userId?: string;
   reason?: AutoTopupReason;
@@ -929,6 +1035,50 @@ async function checkRealPaymentPreflight(input: {
   }
 
   return { ok: true as const };
+}
+
+async function verifyCreditsPaymentReceipt(order: TopupOrder) {
+  if (!order.txHash || !isTransactionHash(order.txHash)) {
+    return { ok: false as const, reason: "payment_tx_hash_missing" };
+  }
+
+  try {
+    const client = createConfiguredPublicClient();
+    const receipt = await client.getTransactionReceipt({
+      hash: order.txHash as `0x${string}`
+    });
+    const paymentContractAddress = getAddress(requiredPaymentContractAddress());
+
+    if (receipt.status !== "success") {
+      return { ok: false as const, reason: "payment_transaction_not_successful" };
+    }
+    if (!receipt.to || getAddress(receipt.to) !== paymentContractAddress) {
+      return { ok: false as const, reason: "payment_contract_mismatch" };
+    }
+
+    return { ok: true as const };
+  } catch (error) {
+    return {
+      ok: false as const,
+      reason: error instanceof Error ? `payment_receipt_unavailable:${error.message}` : "payment_receipt_unavailable"
+    };
+  }
+}
+
+function createConfiguredPublicClient() {
+  const viemChain = process.env.CHAIN_ENV === "base-mainnet" ? base : baseSepolia;
+  const rpcUrl =
+    process.env.BASE_RPC_URL ||
+    (process.env.CHAIN_ENV === "base-mainnet" ? "https://mainnet.base.org" : "https://sepolia.base.org");
+
+  return createPublicClient({
+    chain: viemChain,
+    transport: http(rpcUrl)
+  });
+}
+
+function isTransactionHash(value: string): value is `0x${string}` {
+  return /^0x[a-fA-F0-9]{64}$/.test(value);
 }
 
 function requiredPaymentContractAddress() {

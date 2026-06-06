@@ -71,6 +71,34 @@ button.compact {
   font-size: 13px;
 }
 
+a.button-link {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 40px;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  padding: 0 14px;
+  background: linear-gradient(135deg, #1d8a5f, #22a06f);
+  color: white;
+  font-weight: 650;
+  text-decoration: none;
+  box-shadow: 0 8px 18px rgba(29, 138, 95, 0.18);
+}
+
+a.button-link.secondary {
+  border-color: var(--line);
+  background: rgba(255, 255, 255, 0.82);
+  color: var(--primary-strong);
+  box-shadow: none;
+}
+
+a.button-link.compact {
+  min-height: 30px;
+  padding: 0 10px;
+  font-size: 13px;
+}
+
 .page {
   width: min(1180px, calc(100% - 32px));
   margin: 0 auto;
@@ -535,6 +563,42 @@ button.compact {
 
 .amount-negative {
   color: #a33a2a;
+}
+
+.payment-table-wrap {
+  overflow-x: auto;
+}
+
+.payment-table {
+  width: 100%;
+  min-width: 760px;
+  border-collapse: collapse;
+  font-size: 14px;
+}
+
+.payment-table th,
+.payment-table td {
+  border-bottom: 1px solid var(--line);
+  padding: 12px 10px;
+  text-align: left;
+  vertical-align: top;
+}
+
+.payment-table th {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 750;
+}
+
+.payment-table a {
+  color: var(--primary-strong);
+  font-weight: 650;
+  text-decoration: none;
+}
+
+.muted-text {
+  color: var(--muted);
+  overflow-wrap: anywhere;
 }
 
 .preview-grid {

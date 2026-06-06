@@ -42,6 +42,10 @@ export type CreditRepository = {
     orderId?: string;
     onchainOrderId?: string;
   }): Promise<TopupOrder | undefined>;
+  findTopupOrderByTxHash(input: {
+    userId: string;
+    txHash: string;
+  }): Promise<TopupOrder | undefined>;
   hasChainEvent(eventId: string): Promise<boolean>;
   markChainEventSeen(event: ChainEventRecord): Promise<boolean>;
 };

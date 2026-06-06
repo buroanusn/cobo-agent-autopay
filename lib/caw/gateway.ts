@@ -1,5 +1,12 @@
 import { getConfiguredCawChainId, getConfiguredChain } from "@/lib/domain/constants";
-import { Configuration, FaucetApi, PactsApi, TransactionsApi, WalletsApi } from "@cobo/agentic-wallet";
+import {
+  Configuration,
+  FaucetApi,
+  PactsApi,
+  TransactionRecordsApi,
+  TransactionsApi,
+  WalletsApi
+} from "@cobo/agentic-wallet";
 import { encodeFunctionData } from "viem";
 
 type PactSubmitSpec = NonNullable<Parameters<PactsApi["submitPact"]>[0]["spec"]>;
@@ -52,6 +59,27 @@ export type CawPactStatus = {
   pactApiKey?: string;
 };
 
+export type CawTransactionRecord = {
+  id: string;
+  walletId: string;
+  pactId?: string;
+  type: string;
+  requestType?: string;
+  chainId: string;
+  tokenId: string;
+  from: string;
+  to: string;
+  amount: string;
+  status: string;
+  statusCode?: number;
+  subStatus?: string;
+  txHash?: string;
+  requestId?: string;
+  description?: string;
+  createdAt: string;
+  updatedAt: string;
+};
+
 export type CawGateway = {
   createPairingCode(input: { userId: string; walletId?: string }): Promise<{
     code: string;
@@ -84,6 +112,10 @@ export type CawGateway = {
     txHash: string;
     status: "submitted" | "confirmed";
   }>;
+  listTransactions(input: {
+    walletId?: string;
+    limit?: number;
+  }): Promise<CawTransactionRecord[]>;
 };
 
 export type CawRuntimeStatus = {
@@ -163,6 +195,10 @@ class MockCawGateway implements CawGateway {
       txHash: `0xmockapprove${input.amountUsdcMinor.toString(16).padStart(48, "0")}`,
       status: "confirmed" as const
     };
+  }
+
+  async listTransactions() {
+    return [];
   }
 }
 
@@ -358,6 +394,47 @@ class HttpCawGateway implements CawGateway {
     };
   }
 
+  async listTransactions(input: { walletId?: string; limit?: number }) {
+    const walletId = this.resolveWalletId(input.walletId);
+    const response = await this.transactionRecordsApi().listUserTransactions(
+      walletId,
+      undefined,
+      undefined,
+      undefined,
+      clampLimit(input.limit),
+      undefined,
+      undefined,
+      undefined,
+      getConfiguredCawChainId(),
+      undefined,
+      true
+    );
+
+    return response.data.result.map((record) => {
+      const extTxHash = record.ext_transactions?.find((tx) => tx.transaction_hash)?.transaction_hash;
+      return {
+        id: record.id,
+        walletId: record.wallet_id,
+        pactId: record.pact_id,
+        type: String(record.type),
+        requestType: record.request_type ? String(record.request_type) : undefined,
+        chainId: record.chain_id,
+        tokenId: record.token_id,
+        from: record.src_address,
+        to: record.dst_address,
+        amount: record.amount,
+        status: record.status_display ?? String(record.status),
+        statusCode: record.status,
+        subStatus: record.sub_status,
+        txHash: record.transaction_hash || extTxHash,
+        requestId: record.request_id,
+        description: record.description,
+        createdAt: record.created_at,
+        updatedAt: record.updated_at
+      };
+    });
+  }
+
   private ownerConfig() {
     return new Configuration({ apiKey: this.apiKey, basePath: this.baseUrl });
   }
@@ -378,6 +455,10 @@ class HttpCawGateway implements CawGateway {
     return new TransactionsApi(this.pactConfig(pactApiKey));
   }
 
+  private transactionRecordsApi() {
+    return new TransactionRecordsApi(this.ownerConfig());
+  }
+
   private faucetApi() {
     return new FaucetApi(this.ownerConfig());
   }
@@ -389,6 +470,13 @@ class HttpCawGateway implements CawGateway {
     }
     return resolved;
   }
+}
+
+function clampLimit(limit: number | undefined) {
+  if (!limit || !Number.isFinite(limit)) {
+    return 50;
+  }
+  return Math.min(200, Math.max(1, Math.floor(limit)));
 }
 
 export function createCawGateway(): CawGateway {

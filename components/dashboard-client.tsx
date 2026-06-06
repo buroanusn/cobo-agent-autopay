@@ -29,6 +29,16 @@ type ApiResult = {
       reason: string;
     };
   };
+  order?: {
+    orderId: string;
+    status: string;
+    txHash?: string;
+  };
+  x402?: {
+    paymentProof?: string;
+    paymentHeader: string;
+    resourcePath: string;
+  };
 };
 
 type CawPactPreview = {
@@ -104,6 +114,7 @@ const copy = {
     autoTopup: "每次自动充值",
     runAgent: "运行 Agent",
     topupNow: "立即充值",
+    x402Pay: "x402 资源支付",
     prompt: "Agent 任务说明",
     authorization: "CAW 授权",
     notConnected: "未连接",
@@ -171,6 +182,7 @@ const copy = {
     runPending: "已有充值订单待处理，请先确认订单状态。",
     running: "运行中...",
     topupOk: "充值",
+    x402PayOk: "x402 支付",
     connectOk: "CAW 钱包已连接。",
     authorizeOk: "Pact 已提交。请在 Cobo Agentic Wallet App 内审批，审批后点击刷新 Pact。",
     pactPreviewOk: "Pact 计划已生成，请确认内容后提交到 Cobo App 审批。",
@@ -212,6 +224,7 @@ const copy = {
     autoTopup: "Auto top-up",
     runAgent: "Run Agent",
     topupNow: "Top Up Now",
+    x402Pay: "Pay x402 Resource",
     prompt: "Agent task prompt",
     authorization: "CAW Authorization",
     notConnected: "not connected",
@@ -279,6 +292,7 @@ const copy = {
     runPending: "A top-up order is already pending. Check the order status first.",
     running: "Running...",
     topupOk: "Top-up",
+    x402PayOk: "x402 payment",
     connectOk: "CAW wallet connected.",
     authorizeOk: "Pact submitted. Approve it in Cobo Agentic Wallet App, then refresh Pact.",
     pactPreviewOk: "Pact plan generated. Review it before submitting for Cobo App approval.",
@@ -440,6 +454,9 @@ export function DashboardClient({
           <button className="secondary compact demo-hidden" onClick={() => setLang(lang === "zh" ? "en" : "zh")}>
             {t.language}
           </button>
+          <a className="button-link secondary compact" href="/dashboard/payments">
+            支付记录
+          </a>
           <button className="secondary compact" onClick={logout}>
             {t.logout}
           </button>
@@ -603,6 +620,13 @@ export function DashboardClient({
               disabled={busyAction === "topup"}
             >
               {t.topupNow}
+            </button>
+            <button
+              className="secondary"
+              onClick={() => callAction("x402-pay", "/api/x402/resource/pay")}
+              disabled={busyAction === "x402-pay"}
+            >
+              {t.x402Pay}
             </button>
           </div>
 
@@ -1311,6 +1335,9 @@ function formatTime(value: string) {
 }
 
 function paymentRecordTitle(order: TopupOrder, lang: Lang) {
+  if (order.reason === "x402_resource") {
+    return lang === "zh" ? "x402 资源支付" : "x402 resource payment";
+  }
   if (order.reason === "low_balance") {
     return lang === "zh" ? "低余额自动充值" : "Low-balance top-up";
   }
@@ -1381,6 +1408,13 @@ function statusMessage(action: string, result: ApiResult, lang: Lang) {
     return result.reason
       ? `${t.topupOk} ${result.status}: ${result.reason}`
       : `${t.topupOk} ${result.status}.`;
+  }
+
+  if (action === "x402-pay") {
+    const proof = result.x402?.paymentProof ?? result.order?.orderId;
+    return proof
+      ? `${t.x402PayOk} ${result.status}. proof: ${proof}`
+      : `${t.x402PayOk} ${result.status}.`;
   }
 
   if (action === "connect") {

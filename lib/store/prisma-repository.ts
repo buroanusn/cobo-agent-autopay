@@ -361,6 +361,24 @@ export const prismaRepository: CreditRepository = {
     });
     return order ? mapTopupOrder(order) : undefined;
   },
+  async findTopupOrderByTxHash(input: {
+    userId: string;
+    txHash: string;
+  }): Promise<TopupOrder | undefined> {
+    const order = await prisma.topupOrder.findFirst({
+      where: {
+        userId: input.userId,
+        txHash: {
+          equals: input.txHash,
+          mode: "insensitive"
+        }
+      },
+      orderBy: {
+        createdAt: "desc"
+      }
+    });
+    return order ? mapTopupOrder(order) : undefined;
+  },
   async hasChainEvent(eventId: string): Promise<boolean> {
     const count = await prisma.chainEventSeen.count({ where: { eventId } });
     return count > 0;
