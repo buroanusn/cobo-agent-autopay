@@ -4,7 +4,6 @@ import {
   CREDITS_PER_USDC,
   DEFAULT_SPEND_POLICY,
   DEMO_USER_ID,
-  USDC_MINOR_UNITS,
   getConfiguredCawChainId,
   getConfiguredChain
 } from "@/lib/domain/constants";
@@ -15,6 +14,7 @@ import { createPublicClient, formatUnits, getAddress, http } from "viem";
 import { base, baseSepolia } from "viem/chains";
 
 type AutoTopupReason = "low_balance" | "insufficient_balance" | "manual" | "x402_resource";
+const DEFAULT_X402_RESOURCE_PRICE_USDC_MINOR = 10_000;
 
 export type CawPactPreview = {
   intent: string;
@@ -623,9 +623,11 @@ export async function executeAutoTopup(input: {
 }
 
 export function getX402ResourcePriceUsdcMinor() {
-  const configured = Number(process.env.X402_RESOURCE_PRICE_USDC_MINOR ?? USDC_MINOR_UNITS);
+  const configured = Number(
+    process.env.X402_RESOURCE_PRICE_USDC_MINOR ?? DEFAULT_X402_RESOURCE_PRICE_USDC_MINOR
+  );
   if (!Number.isFinite(configured) || configured <= 0) {
-    return USDC_MINOR_UNITS;
+    return DEFAULT_X402_RESOURCE_PRICE_USDC_MINOR;
   }
   return Math.floor(configured);
 }
