@@ -41,6 +41,10 @@ export type CreditRepository = {
     orderId?: string;
     onchainOrderId?: string;
   }): Promise<TopupOrder | undefined>;
+  listStaleTopupOrders(input: {
+    cutoffIso: string;
+    statuses: TopupOrder["status"][];
+  }): Promise<TopupOrder[]>;
   hasChainEvent(eventId: string): Promise<boolean>;
   markChainEventSeen(event: ChainEventRecord): Promise<boolean>;
 };

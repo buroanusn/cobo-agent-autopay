@@ -131,6 +131,18 @@ export const memoryRepository: CreditRepository = {
         candidate.orderId === input.orderId || candidate.onchainOrderId === input.onchainOrderId
     );
   },
+  async listStaleTopupOrders(input: {
+    cutoffIso: string;
+    statuses: TopupOrder["status"][];
+  }): Promise<TopupOrder[]> {
+    const cutoffMs = Date.parse(input.cutoffIso);
+    return [...db.topupOrders.values()]
+      .filter(
+        (order) =>
+          input.statuses.includes(order.status) && Date.parse(order.createdAt) < cutoffMs
+      )
+      .sort((a, b) => Date.parse(a.createdAt) - Date.parse(b.createdAt));
+  },
   async hasChainEvent(eventId: string): Promise<boolean> {
     return db.chainEventsSeen.has(eventId);
   },

@@ -9,7 +9,7 @@ import {
   getConfiguredChain
 } from "@/lib/domain/constants";
 import { creditsToUsdcMinor } from "@/lib/domain/money";
-import type { CawAuthorization } from "@/lib/domain/types";
+import type { CawAuthorization, TopupOrder } from "@/lib/domain/types";
 import { getCreditRepository } from "@/lib/store";
 import { createPublicClient, formatUnits, getAddress, http } from "viem";
 import { base, baseSepolia } from "viem/chains";
@@ -727,6 +727,61 @@ export async function executeCreditsTopup(input: {
     status: "submitted" as const,
     order: returnedOrder,
     snapshot: await repository.snapshotForUser(userId)
+  };
+}
+
+const EXPIRABLE_TOPUP_STATUSES: TopupOrder["status"][] = [
+  "pending_policy",
+  "pending_approval",
+  "caw_submitted",
+  "chain_pending"
+];
+
+export const STALE_TOPUP_TIMEOUT_MS = 30 * 60 * 1000;
+
+export async function expireStaleTopupOrders(input: {
+  timeoutMs?: number;
+  nowMs?: number;
+} = {}) {
+  const repository = getCreditRepository();
+  const timeoutMs = input.timeoutMs ?? STALE_TOPUP_TIMEOUT_MS;
+  const nowMs = input.nowMs ?? Date.now();
+  const cutoffIso = new Date(nowMs - timeoutMs).toISOString();
+
+  const stale = await repository.listStaleTopupOrders({
+    cutoffIso,
+    statuses: EXPIRABLE_TOPUP_STATUSES
+  });
+
+  const expiredMinutes = Math.max(1, Math.round(timeoutMs / 60000));
+  const expiredOrders: TopupOrder[] = [];
+  const failed: { orderId: string; error: string }[] = [];
+
+  for (const order of stale) {
+    try {
+      const next: TopupOrder = {
+        ...order,
+        status: "approval_expired",
+        failureReason: `approval_timeout_after_${expiredMinutes}m`,
+        updatedAt: repository.nowIso()
+      };
+      const persisted = await repository.updateTopupOrder(next);
+      expiredOrders.push(persisted);
+    } catch (error) {
+      failed.push({
+        orderId: order.orderId,
+        error: error instanceof Error ? error.message : "unknown"
+      });
+    }
+  }
+
+  return {
+    cutoffIso,
+    timeoutMs,
+    expiredCount: expiredOrders.length,
+    failedCount: failed.length,
+    expiredOrders,
+    failed
   };
 }
 
