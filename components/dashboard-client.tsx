@@ -91,6 +91,8 @@ type CawStatusResult = {
 
 type Lang = "zh" | "en";
 
+
+
 type CawTxRecord = {
   id: string;
   time: string;
@@ -131,6 +133,7 @@ const copy = {
     singleLimit: "单笔上限",
     dailySpent: "今日支出",
     pair: "生成配对码",
+    refreshPair: "刷新配对状态",
     connect: "连接 CAW",
     enablePact: "启用 Pact",
     generatePactPlan: "生成 Pact 计划",
@@ -196,6 +199,7 @@ const copy = {
     approveOk: "USDC 授权已提交到真实 CAW。",
     faucetOk: "测试币请求已提交，会调用 CAW Faucet。",
     pairOk: "配对码已生成。请在 Cobo Agentic Wallet App 内完成绑定。",
+    refreshPairOk: "已查询上游配对状态。如果已在 App 中确认，请等待几秒后再点一次。",
     guardrailsOk: "Guardrails 推荐已生成。最终设置需在 Cobo App 内确认。",
     integrationStatus: "真实 CAW 接入状态",
     environment: "环境",
@@ -215,7 +219,25 @@ const copy = {
     gasBalance: "Gas 余额",
     statusHint: "这里只展示脱敏状态，API key 和私钥不会返回到浏览器。",
     presentationHint: "真实支付就绪需要 CAW 配置、有效 Pact、剩余额度、USDC 授权、USDC 余额和 gas 都满足。",
-    done: "完成。"
+    done: "完成。",
+    cawWalletBinding: "CAW 钱包绑定",
+    cawWalletBindingHint: "从 caw skill 安装记录发现钱包，或手动输入 UUID。绑定后所有 API 会自动用此钱包。",
+    cawDetect: "检测本机钱包",
+    cawAutobind: "自动绑定默认钱包",
+    cawManualBind: "手动绑定",
+    cawUuid: "钱包 UUID",
+    cawUuidPlaceholder: "例如：6b39ed06-1af9-4067-82b8-67ea09c7b1ec",
+    cawName: "钱包名称",
+    cawNamePlaceholder: "例如：EthanTestProd",
+    cawEnvProd: "主网 (Base mainnet)",
+    cawEnvDev: "测试网 (Base Sepolia)",
+    cawBind: "绑定",
+    cawPactStatus: "Pact 授权状态",
+    cawPactCount: "活跃 Pact",
+    cawPactBaseReady: "Base USDC Pact 就绪",
+    cawPactBaseMissing: "缺少 Base USDC Pact（Venice 充值会失败）",
+    cawPactExpires: "过期",
+    cawPactRemaining: "剩余"
   },
   en: {
     language: "中文",
@@ -239,6 +261,7 @@ const copy = {
     singleLimit: "Single limit",
     dailySpent: "Daily spent",
     pair: "Generate Pairing Code",
+    refreshPair: "Refresh Pair Status",
     connect: "Connect CAW",
     enablePact: "Enable Pact",
     generatePactPlan: "Generate Pact Plan",
@@ -304,6 +327,7 @@ const copy = {
     approveOk: "USDC approval submitted to real CAW.",
     faucetOk: "Test token request submitted through CAW Faucet.",
     pairOk: "Pairing code generated. Complete pairing in Cobo Agentic Wallet App.",
+    refreshPairOk: "Pair status refreshed. If you already confirmed in the app, the row will flip to 'Paired' within the next click.",
     guardrailsOk: "Guardrails recommendation generated. Final settings must be confirmed in Cobo App.",
     integrationStatus: "Real CAW Integration Status",
     environment: "Environment",
@@ -323,7 +347,25 @@ const copy = {
     gasBalance: "Gas balance",
     statusHint: "Only redacted status is shown here. API keys and private keys never reach the browser.",
     presentationHint: "Real payment requires CAW config, active Pact, remaining spend, allowance, USDC balance, and gas.",
-    done: "Done."
+    done: "Done.",
+    cawWalletBinding: "CAW Wallet Binding",
+    cawWalletBindingHint: "Discover wallets from your installed caw skill, or enter a UUID manually. All APIs will use the bound wallet.",
+    cawDetect: "Detect Local Wallets",
+    cawAutobind: "Auto-Bind Default Wallet",
+    cawManualBind: "Manual Bind",
+    cawUuid: "Wallet UUID",
+    cawUuidPlaceholder: "e.g. 6b39ed06-1af9-4067-82b8-67ea09c7b1ec",
+    cawName: "Wallet Name",
+    cawNamePlaceholder: "e.g. EthanTestProd",
+    cawEnvProd: "Mainnet (Base mainnet)",
+    cawEnvDev: "Testnet (Base Sepolia)",
+    cawBind: "Bind",
+    cawPactStatus: "Pact Authorization Status",
+    cawPactCount: "Active Pacts",
+    cawPactBaseReady: "Base USDC Pact ready",
+    cawPactBaseMissing: "Missing Base USDC Pact (Venice top-up will fail)",
+    cawPactExpires: "expires",
+    cawPactRemaining: "remaining"
   }
 } as const;
 
@@ -340,6 +382,36 @@ export function DashboardClient({
   const [pactPreview, setPactPreview] = useState<CawPactPreview>();
   const [lang, setLang] = useState<Lang>("zh");
   const [cawTxRecords, setCawTxRecords] = useState<CawTxRecord[]>([]);
+  // CAW wallet discovery / manual bind
+  const [cawWallets, setCawWallets] = useState<
+    Array<{
+      walletUuid: string;
+      walletName: string;
+      agentId: string;
+      agentName: string;
+      apiUrl: string;
+      env: "prod" | "dev" | "unknown";
+      isActive: boolean;
+      status: string;
+      onboardedAt: string;
+    }>
+  >([]);
+  const [cawDiscoverError, setCawDiscoverError] = useState<string>();
+  const [cawManualUuid, setCawManualUuid] = useState("");
+  const [cawManualName, setCawManualName] = useState("");
+  const [cawManualEnv, setCawManualEnv] = useState<"prod" | "dev">("prod");
+  const [cawDiscoverLoading, setCawDiscoverLoading] = useState(false);
+  const [cawBindLoading, setCawBindLoading] = useState(false);
+  const [cawPacts, setCawPacts] = useState<
+    Array<{
+      id: string;
+      name: string;
+      status: string;
+      expiresAt: string;
+      remaining?: { timeRemainingSeconds?: number; txCountRemaining?: number };
+    }>
+  >([]);
+  const [cawHasBaseUsdcPact, setCawHasBaseUsdcPact] = useState(false);
   const [prompt, setPrompt] = useState(
     "Analyze the user's portfolio and continue the agent task."
   );
@@ -354,6 +426,8 @@ export function DashboardClient({
   useEffect(() => {
     void refresh();
   }, []);
+
+
 
   async function refresh() {
     const [snapshotResponse, cawStatusResponse, cawTxResponse] = await Promise.all([
@@ -380,6 +454,166 @@ export function DashboardClient({
     if (cawTxResponse.ok) {
       const cawData = (await cawTxResponse.json()) as { records?: CawTxRecord[] };
       setCawTxRecords(cawData.records ?? []);
+    }
+
+    // Also refresh pacts list whenever status refreshes (wallet may have
+    // just been bound).
+    void loadCawPacts();
+
+  }
+
+  async function discoverCawWallets() {
+    setCawDiscoverLoading(true);
+    setCawDiscoverError(undefined);
+    try {
+      const response = await fetch("/api/wallet/caw/discover", {
+        cache: "no-store"
+      });
+      const data = (await response.json()) as {
+        ok: boolean;
+        wallets?: Array<{
+          walletUuid: string;
+          walletName: string;
+          agentId: string;
+          agentName: string;
+          apiUrl: string;
+          env: "prod" | "dev" | "unknown";
+          isActive: boolean;
+          status: string;
+          onboardedAt: string;
+        }>;
+        error?: string;
+      };
+      if (!response.ok || !data.ok) {
+        setCawDiscoverError(data.error ?? `HTTP ${response.status}`);
+        return;
+      }
+      setCawWallets(data.wallets ?? []);
+      if ((data.wallets ?? []).length === 0) {
+        setCawDiscoverError("No wallets found in caw profile directory.");
+      }
+    } catch (e) {
+      setCawDiscoverError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setCawDiscoverLoading(false);
+    }
+  }
+
+  async function bindCawWallet(input: {
+    walletUuid: string;
+    walletName: string;
+    apiUrl: string;
+    agentId?: string;
+    autoEnv?: "prod" | "dev";
+  }) {
+    setCawBindLoading(true);
+    setMessage(undefined);
+    setError(undefined);
+    try {
+      const apiUrl =
+        input.apiUrl ||
+        (input.autoEnv === "prod"
+          ? "https://api.agenticwallet.cobo.com"
+          : "https://api-core.agenticwallet.dev.cobo.com");
+      const response = await fetch("/api/wallet/caw/runtime-config", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          walletUuid: input.walletUuid,
+          walletName: input.walletName,
+          apiUrl,
+          agentId: input.agentId ?? ""
+        })
+      });
+      const data = (await response.json()) as {
+        ok: boolean;
+        error?: string;
+        current?: { walletUuid: string; walletName: string; apiUrl: string };
+      };
+      if (!response.ok || !data.ok) {
+        setError(data.error ?? `Bind failed (HTTP ${response.status})`);
+        return;
+      }
+      setMessage(
+        `Wallet bound: ${data.current?.walletName ?? input.walletName} (${data.current?.walletUuid?.slice(0, 8) ?? ""}…)`
+      );
+      // Optimistically update cawStatus so the panel reflects the bound
+      // wallet immediately — no need to wait 4s for the background refresh
+      // (which is slow because of `caw tx list`).
+      setCawStatus((prev) => {
+        if (!prev) return prev;
+        return {
+          ...prev,
+          runtime: {
+            ...prev.runtime,
+            walletConfigured: true,
+            walletId: data.current?.walletUuid ?? input.walletUuid,
+            walletName: data.current?.walletName ?? input.walletName
+          }
+        };
+      });
+      // Release the button immediately — refresh runs in background so
+      // the 4-second `caw tx list` doesn't block the UI.
+      setCawBindLoading(false);
+      void refresh();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+      setCawBindLoading(false);
+    }
+  }
+
+  async function loadCawPacts() {
+    try {
+      const response = await fetch("/api/wallet/caw/pacts", {
+        cache: "no-store"
+      });
+      const data = (await response.json()) as {
+        ok: boolean;
+        pacts?: Array<{
+          id: string;
+          name: string;
+          status: string;
+          expiresAt: string;
+          remaining?: { timeRemainingSeconds?: number; txCountRemaining?: number };
+        }>;
+        hasBaseUsdcPact?: boolean;
+        error?: string;
+      };
+      if (!response.ok || !data.ok) return;
+      setCawPacts(data.pacts ?? []);
+      setCawHasBaseUsdcPact(Boolean(data.hasBaseUsdcPact));
+    } catch {
+      // Silent: pacts are informational.
+    }
+  }
+
+  async function autobindFromCawCli() {
+    setCawBindLoading(true);
+    setMessage(undefined);
+    setError(undefined);
+    try {
+      const response = await fetch(
+        "/api/wallet/caw/runtime-config?autobind=1",
+        { cache: "no-store" }
+      );
+      const data = (await response.json()) as {
+        ok: boolean;
+        error?: string;
+        profile?: { walletName: string; walletUuid: string };
+      };
+      if (!response.ok || !data.ok) {
+        setError(data.error ?? `Autobind failed (HTTP ${response.status})`);
+        return;
+      }
+      setMessage(
+        `Auto-bound: ${data.profile?.walletName} (${data.profile?.walletUuid?.slice(0, 8)}…)`
+      );
+      // Release the button immediately — refresh in background.
+      setCawBindLoading(false);
+      void refresh();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+      setCawBindLoading(false);
     }
   }
 
@@ -554,6 +788,13 @@ export function DashboardClient({
               disabled={busyAction === "pair" || walletPaired}
             >
               {walletPaired ? "已配对，无需生成" : "生成配对码"}
+            </button>
+            <button
+              className="secondary"
+              onClick={() => callAction("refresh-pair", "/api/wallet/caw/pairing-code/refresh")}
+              disabled={busyAction === "refresh-pair" || !snapshot.pairingSession || walletPaired}
+            >
+              {t.refreshPair}
             </button>
             <button
               className="secondary"
@@ -739,6 +980,13 @@ export function DashboardClient({
             </button>
             <button
               className="secondary"
+              onClick={() => callAction("refresh-pair", "/api/wallet/caw/pairing-code/refresh")}
+              disabled={busyAction === "refresh-pair" || !snapshot.pairingSession || walletPaired}
+            >
+              {t.refreshPair}
+            </button>
+            <button
+              className="secondary"
               onClick={() => callAction("connect", "/api/wallet/caw/connect")}
               disabled={busyAction === "connect" || walletConnected}
             >
@@ -832,6 +1080,192 @@ export function DashboardClient({
               <span>{t.pactPreviewHint}</span>
             </div>
           )}
+        </div>
+
+        {/* CAW Wallet Binding Panel — discover + manual bind */}
+        <div className="panel span-12">
+          <div className="panel-title">
+            <h2>{t.cawWalletBinding}</h2>
+            <span
+              className={`status ${
+                cawStatus?.runtime.walletConfigured ? "active" : "blocked"
+              }`}
+            >
+              {cawStatus?.runtime.walletConfigured
+                ? cawStatus.runtime.walletName ?? t.configured
+                : t.missing}
+            </span>
+          </div>
+          <p className="subtitle" style={{ marginTop: 0 }}>{t.cawWalletBindingHint}</p>
+
+          <div className="row" style={{ marginTop: 10 }}>
+            <button
+              className="primary compact"
+              onClick={() => void discoverCawWallets()}
+              disabled={cawDiscoverLoading}
+            >
+              {cawDiscoverLoading ? "…" : t.cawDetect}
+            </button>
+            <button
+              className="secondary compact"
+              onClick={() => void autobindFromCawCli()}
+              disabled={cawBindLoading}
+            >
+              {t.cawAutobind}
+            </button>
+            <span className="value" style={{ marginLeft: 8 }}>
+              {cawStatus?.runtime.walletId
+                ? `${cawStatus.runtime.walletId.slice(0, 8)}… · ${cawStatus.runtime.environment}`
+                : t.missing}
+            </span>
+          </div>
+
+          {cawDiscoverError ? (
+            <div className="event" style={{ marginTop: 8 }}>
+              <strong>⚠ {cawDiscoverError}</strong>
+            </div>
+          ) : null}
+
+          {cawWallets.length > 0 ? (
+            <div className="stack" style={{ marginTop: 10 }}>
+              {cawWallets.map((w) => (
+                <div key={w.walletUuid} className="event">
+                  <div>
+                    <strong>{w.walletName}</strong>
+                    <span style={{ marginLeft: 8, opacity: 0.7 }}>
+                      {w.env === "prod" ? t.cawEnvProd : w.env === "dev" ? t.cawEnvDev : w.env}
+                      {w.isActive ? " · active" : ""}
+                    </span>
+                  </div>
+                  <code className="value" style={{ fontSize: 11 }}>{w.walletUuid}</code>
+                  <div className="row" style={{ marginTop: 6 }}>
+                    <button
+                      className="primary compact"
+                      onClick={() =>
+                        void bindCawWallet({
+                          walletUuid: w.walletUuid,
+                          walletName: w.walletName,
+                          apiUrl: w.apiUrl,
+                          agentId: w.agentId
+                        })
+                      }
+                      disabled={cawBindLoading}
+                    >
+                      {t.cawBind}
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          ) : null}
+
+          <div className="event" style={{ marginTop: 14 }}>
+            <strong>{t.cawManualBind}</strong>
+            <div className="stack" style={{ marginTop: 8 }}>
+              <label className="row">
+                <span style={{ minWidth: 90 }}>{t.cawUuid}</span>
+                <input
+                  className="input"
+                  style={{ flex: 1, fontFamily: "monospace" }}
+                  placeholder={t.cawUuidPlaceholder}
+                  value={cawManualUuid}
+                  onChange={(e) => setCawManualUuid(e.target.value)}
+                />
+              </label>
+              <label className="row">
+                <span style={{ minWidth: 90 }}>{t.cawName}</span>
+                <input
+                  className="input"
+                  style={{ flex: 1 }}
+                  placeholder={t.cawNamePlaceholder}
+                  value={cawManualName}
+                  onChange={(e) => setCawManualName(e.target.value)}
+                />
+              </label>
+              <div className="row">
+                <span style={{ minWidth: 90 }}>网络</span>
+                <label className="row" style={{ marginRight: 14 }}>
+                  <input
+                    type="radio"
+                    name="caw-env"
+                    checked={cawManualEnv === "prod"}
+                    onChange={() => setCawManualEnv("prod")}
+                  />
+                  <span style={{ marginLeft: 4 }}>{t.cawEnvProd}</span>
+                </label>
+                <label className="row">
+                  <input
+                    type="radio"
+                    name="caw-env"
+                    checked={cawManualEnv === "dev"}
+                    onChange={() => setCawManualEnv("dev")}
+                  />
+                  <span style={{ marginLeft: 4 }}>{t.cawEnvDev}</span>
+                </label>
+              </div>
+              <div className="row">
+                <button
+                  className="primary compact"
+                  onClick={() =>
+                    void bindCawWallet({
+                      walletUuid: cawManualUuid.trim(),
+                      walletName: cawManualName.trim() || "manual",
+                      apiUrl: "",
+                      autoEnv: cawManualEnv
+                    })
+                  }
+                  disabled={
+                    cawBindLoading ||
+                    !/^[0-9a-f-]{36}$/i.test(cawManualUuid.trim())
+                  }
+                >
+                  {t.cawBind}
+                </button>
+              </div>
+            </div>
+          </div>
+
+          {/* Pact Authorization Status */}
+          <div className="event" style={{ marginTop: 14 }}>
+            <strong>{t.cawPactStatus}</strong>
+            <div className="row" style={{ marginTop: 6 }}>
+              <span>{t.cawPactCount}</span>
+              <span className="value">{cawPacts.length}</span>
+            </div>
+            <div className="row">
+              <span>Base USDC Pact</span>
+              <span
+                className={`value ${
+                  cawHasBaseUsdcPact ? "status active" : "status blocked"
+                }`}
+              >
+                {cawHasBaseUsdcPact ? t.cawPactBaseReady : t.cawPactBaseMissing}
+              </span>
+            </div>
+            {cawPacts.length > 0 ? (
+              <div className="stack" style={{ marginTop: 8 }}>
+                {cawPacts.slice(0, 5).map((p) => (
+                  <div key={p.id} className="event" style={{ padding: 8 }}>
+                    <code style={{ fontSize: 10 }}>{p.id.slice(0, 8)}…</code>
+                    <div style={{ fontSize: 12, marginTop: 4 }}>
+                      {p.name.length > 80 ? p.name.slice(0, 80) + "…" : p.name}
+                    </div>
+                    <div className="row" style={{ fontSize: 11, opacity: 0.75 }}>
+                      <span>status: {p.status}</span>
+                      {p.remaining?.txCountRemaining != null ? (
+                        <span>
+                          · {p.remaining.txCountRemaining} tx {t.cawPactRemaining}
+                        </span>
+                      ) : null}
+                      {p.expiresAt ? (
+                        <span>· {t.cawPactExpires} {p.expiresAt.slice(0, 10)}</span>
+                      ) : null}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ) : null}
+          </div>
         </div>
 
         <div className="panel span-12">
@@ -1456,6 +1890,10 @@ function statusMessage(action: string, result: ApiResult, lang: Lang) {
 
   if (action === "pair") {
     return t.pairOk;
+  }
+
+  if (action === "refresh-pair") {
+    return t.refreshPairOk;
   }
 
   if (action === "guardrails") {

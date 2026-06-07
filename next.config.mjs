@@ -10,24 +10,26 @@ const nextConfig = {
     "@prisma/client",
     "prisma"
   ],
-  webpack: (config) => {
+  webpack: (config, { isServer }) => {
     // Set `node:` schemes and bare `crypto` / `fs` modules to an empty
-    // module on the client side. We never need them in the browser bundle.
+    // module on the CLIENT side. We never need them in the browser bundle.
     // The server bundle resolves them via Node.js at runtime.
-    config.resolve = config.resolve || {};
-    config.resolve.fallback = {
-      ...(config.resolve.fallback || {}),
-      "node:crypto": false,
-      "node:buffer": false,
-      "node:url": false,
-      "node:path": false,
-      "node:fs": false,
-      "node:stream": false,
-      crypto: false,
-      buffer: false,
-      fs: false,
-      stream: false
-    };
+    if (!isServer) {
+      config.resolve = config.resolve || {};
+      config.resolve.fallback = {
+        ...(config.resolve.fallback || {}),
+        "node:crypto": false,
+        "node:buffer": false,
+        "node:url": false,
+        "node:path": false,
+        "node:fs": false,
+        "node:stream": false,
+        crypto: false,
+        buffer: false,
+        fs: false,
+        stream: false
+      };
+    }
     return config;
   }
 };

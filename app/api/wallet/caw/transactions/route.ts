@@ -1,12 +1,15 @@
 import { NextResponse } from "next/server";
 import { execSync } from "child_process";
 
-// Force the correct HOME so caw CLI finds the right profile
-const CAW_HOME = "/Users/jichenyang/.hermes/profiles/think/home";
+// Use the user's actual HOME so caw CLI reads the real profile directory
+// (~/.cobo-agentic-wallet/profiles/...) where their CAW wallets live.
+// Previous value pointed at the "think" Hermes profile home which has a
+// different (empty) caw profile.
+const CAW_HOME = "/Users/jichenyang";
 
 export async function GET() {
   try {
-    const raw = execSync("caw tx list --limit 50", {
+    const raw = execSync("caw tx list --limit 10", {
       timeout: 15000,
       encoding: "utf-8",
       env: { ...process.env, HOME: CAW_HOME },

@@ -2,11 +2,47 @@
 // Schema derived from https://docs.venice.ai/api-reference/endpoint/x402/*
 // and https://docs.venice.ai/api-reference/endpoint/billing/*
 
-export type RuntimeConfigKey =
+export type VeniceRuntimeConfigKey =
   | "venice_api_key"
   | "venice_inference_model"
   | "venice_low_balance_threshold_usd"
   | "x402_topup_default_usd";
+
+export type CawRuntimeConfigKey =
+  | "caw_wallet_uuid"
+  | "caw_wallet_name"
+  | "caw_api_url"
+  | "caw_agent_id";
+
+export type RuntimeConfigKey = VeniceRuntimeConfigKey | CawRuntimeConfigKey;
+
+export type CawPactSummary = {
+  id: string;
+  name: string;
+  intent: string;
+  status: "active" | "pending_approval" | "completed" | "expired" | "revoked" | "rejected" | "unknown";
+  isDefault: boolean;
+  expiresAt: string;
+  remaining?: {
+    timeRemainingSeconds?: number;
+    txCountRemaining?: number;
+    amountRemainingUsdMinor?: number;
+  };
+  operatorName?: string;
+  raw: unknown;
+};
+
+export type CawWalletSummary = {
+  walletUuid: string;
+  walletName: string;
+  agentId: string;
+  agentName: string;
+  apiUrl: string;
+  env: "prod" | "dev" | "unknown";
+  isActive: boolean;
+  status: string;
+  onboardedAt: string;
+};
 
 export type RuntimeConfigEntry = {
   key: RuntimeConfigKey;

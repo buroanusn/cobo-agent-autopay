@@ -1,4 +1,4 @@
-import { createCawGateway, getCawRuntimeStatus } from "@/lib/caw/gateway";
+import { getCawRuntimeStatus } from "@/lib/caw/gateway";
 import { draftCawPactFromIntent } from "@/lib/caw/pact-drafter";
 import {
   CREDITS_PER_USDC,
@@ -9,9 +9,9 @@ import {
   getConfiguredChain
 } from "@/lib/domain/constants";
 import { creditsToUsdcMinor } from "@/lib/domain/money";
-import type { CawAuthorization, TopupOrder } from "@/lib/domain/types";
+import type { CawAuthorization, CawPairingSession, TopupOrder } from "@/lib/domain/types";
 import { getCreditRepository } from "@/lib/store";
-import { createPublicClient, formatUnits, getAddress, http } from "viem";
+import { createPublicClient, encodeFunctionData, formatUnits, getAddress, http } from "viem";
 import { base, baseSepolia } from "viem/chains";
 
 type AutoTopupReason = "low_balance" | "insufficient_balance" | "manual";
@@ -197,17 +197,99 @@ export async function createPairingCode(input: { userId?: string }) {
   const repository = getCreditRepository();
   const userId = input.userId ?? DEMO_USER_ID;
   await repository.requireUser(userId);
-  const gateway = createCawGateway();
-  const pairing = await gateway.createPairingCode({ userId });
+  // Use caw CLI instead of SDK (Node.js HTTPS → TLS failure with 198.18.x.x DNS)
+  const { execSync } = eval('require')('child_process') as typeof import("child_process");
+  const rawJson = execSync(`HOME=/Users/jichenyang caw wallet pair`, {
+    timeout: 15000,
+    encoding: "utf-8"
+  });
+  const parsed = JSON.parse(rawJson) as {
+    token?: string;
+    expires_at?: string;
+    status?: string;
+  };
   const session = await repository.createPairingSession(userId, {
-    code: pairing.code,
-    status: pairing.status,
-    expiresAt: pairing.expiresAt,
+    code: parsed.token ?? "",
+    status: "generated" as const,
+    expiresAt: parsed.expires_at ?? repository.nowIso(),
     createdAt: repository.nowIso()
   });
 
   return {
     pairingSession: session,
+    snapshot: await repository.snapshotForUser(userId)
+  };
+}
+
+/**
+ * R1.4 pair-complete: query the upstream CAW service for the latest
+ * pair-claim status, then mirror it into the local CawPairingSession row.
+ *
+ * Mapping (SDK token_status → project CawPairingSession.status):
+ *   valid       → generated  (user has not yet typed code in Cobo App)
+ *   paired      → paired     (human confirmed; reshare may still be pending)
+ *   completed   → paired     (final state — first pair flow finished)
+ *   expired     → expired    (30-minute TTL elapsed)
+ *   not_found   → no change  (no pending claim row exists upstream)
+ *
+ * Always returns the current local session. When the row is already in a
+ * terminal state (paired/expired) we skip the upstream call to avoid
+ * burning API quota on a known-finished flow.
+ */
+export async function refreshPairingStatus(input: { userId?: string }) {
+  const repository = getCreditRepository();
+  const userId = input.userId ?? DEMO_USER_ID;
+  await repository.requireUser(userId);
+
+  const existing = (await repository.snapshotForUser(userId)).pairingSession;
+  if (!existing) {
+    // No local row → nothing to refresh. The dashboard only shows the pair
+    // card after the user clicks "Generate Pairing Code", which creates the
+    // row. Polling this endpoint before that point is a no-op.
+    return { pairingSession: null, snapshot: await repository.snapshotForUser(userId) };
+  }
+  if (existing.status === "paired" || existing.status === "expired") {
+    return { pairingSession: existing, snapshot: await repository.snapshotForUser(userId) };
+  }
+
+  // Use caw CLI instead of SDK (Node.js HTTPS → TLS failure with 198.18.x.x DNS)
+  let upstreamStatus: "generated" | "paired" | "expired" | "not_found" = "not_found";
+  let token: string | undefined;
+  try {
+    const { execSync } = eval('require')('child_process') as typeof import("child_process");
+    const rawJson = execSync(`HOME=/Users/jichenyang caw wallet pair-status`, {
+      timeout: 10000,
+      encoding: "utf-8"
+    });
+    const parsed = JSON.parse(rawJson) as {
+      token_status?: string;
+      token?: string;
+    };
+    const rawStatus = (parsed.token_status ?? "").toLowerCase();
+    upstreamStatus =
+      rawStatus === "valid"
+        ? "generated"
+        : rawStatus === "paired" || rawStatus === "completed"
+          ? "paired"
+          : rawStatus === "expired"
+            ? "expired"
+            : "not_found";
+    token = parsed.token;
+  } catch {
+    upstreamStatus = "not_found";
+  }
+  let nextSession = existing;
+  if (upstreamStatus !== "not_found") {
+    nextSession = await repository.createPairingSession(userId, {
+      code: token ?? existing.code,
+      status: upstreamStatus as CawPairingSession["status"],
+      expiresAt: existing.expiresAt,
+      createdAt: existing.createdAt
+    });
+  }
+
+  return {
+    pairingSession: nextSession,
     snapshot: await repository.snapshotForUser(userId)
   };
 }
@@ -256,8 +338,27 @@ export async function connectCawWallet(input: {
   const userId = input.userId ?? DEMO_USER_ID;
   const walletAddress = input.walletAddress ?? DEMO_CAW_WALLET;
   const user = await repository.requireUser(userId);
-  const gateway = createCawGateway();
-  const connection = await gateway.connectWallet({ userId, walletAddress });
+  // Use caw CLI instead of SDK
+  const { execSync } = eval('require')('child_process') as typeof import("child_process");
+  const currentJson = execSync(`HOME=/Users/jichenyang caw wallet current`, {
+    timeout: 10000, encoding: "utf-8"
+  });
+  const current = JSON.parse(currentJson) as { wallet_uuid?: string; wallet_name?: string };
+  const walletId = current.wallet_uuid ?? "";
+  const balanceJson = execSync(`HOME=/Users/jichenyang caw wallet balance --limit 5`, {
+    timeout: 10000, encoding: "utf-8"
+  });
+  const balanceData = JSON.parse(balanceJson) as {
+    result?: Array<{ address?: string; chain_id?: string }>;
+  };
+  const addresses = balanceData?.result ?? [];
+  const evmAddress = addresses.find((a) => (a.address ?? "").startsWith("0x"));
+  const resolvedAddress = evmAddress?.address ?? walletAddress;
+  const connection = {
+    connectionId: walletId,
+    walletId,
+    walletAddress: resolvedAddress
+  };
   const existing = await repository.findUserByCawWalletAddress(connection.walletAddress);
   if (existing && existing.id !== user.id) {
     throw new Error(`This CAW wallet is already bound to ${existing.email}.`);
@@ -292,22 +393,27 @@ export async function createCawAuthorization(input: {
   const expiresAt = new Date(
     Date.now() + (input.validDays ?? DEFAULT_SPEND_POLICY.validDays) * 24 * 60 * 60 * 1000
   ).toISOString();
-  const gateway = createCawGateway();
-  const pact = await gateway.createPact({
-    userId,
-    walletAddress,
-    contractAddress: process.env.PAYMENT_CONTRACT_ADDRESS,
-    usdcAddress: getConfiguredChain().usdcAddress,
-    singleLimitUsdcMinor: preview.limits.singleLimitUsdcMinor,
-    dailyLimitUsdcMinor: preview.limits.dailyLimitUsdcMinor,
-    monthlyLimitUsdcMinor: preview.limits.monthlyLimitUsdcMinor,
-    expiresAt,
-    pactIntent: preview.intent,
-    originalIntent: preview.originalIntent,
-    executionPlan: preview.executionPlan,
-    policies: preview.policies,
-    completionConditions: preview.completionConditions
-  });
+  // Use caw CLI instead of SDK
+  const { execSync } = eval('require')('child_process') as typeof import("child_process");
+  const shj = (s: string) => s.replace(/[\\"$`]/g, "\\$&").replace(/\n/g, "\\n");
+  const policiesJson = JSON.stringify(preview.policies);
+  const conditionsJson = JSON.stringify(preview.completionConditions);
+  const cmd = `HOME=/Users/jichenyang caw pact submit` +
+    ` --intent "${shj(preview.intent)}"` +
+    ` --original-intent "${shj(preview.originalIntent)}"` +
+    ` --policies '${policiesJson.replace(/'/g, "'\\''")}'` +
+    ` --completion-conditions '${conditionsJson.replace(/'/g, "'\\''")}'` +
+    ` --execution-plan "${shj(preview.executionPlan)}"`;
+  const rawJson = execSync(cmd, { timeout: 20000, encoding: "utf-8" });
+  const pactData = JSON.parse(rawJson) as {
+    result?: { pact_id?: string; status?: string };
+  };
+  const pactResult = pactData?.result ?? {};
+  const pact = {
+    pactId: pactResult.pact_id ?? "",
+    status: pactResult.status === "active" ? ("active" as const) : ("pending_user_approval" as const),
+    pactApiKey: undefined as string | undefined
+  };
 
   const authorization: CawAuthorization = {
     id: repository.createId("auth"),
@@ -352,10 +458,10 @@ export async function previewCawAuthorization(input: {
   const walletAddress = user.cawWalletAddress ?? DEMO_CAW_WALLET;
   const chain = getConfiguredChain();
   const coboChainId = getConfiguredCawChainId();
-  const contractAddress = process.env.PAYMENT_CONTRACT_ADDRESS;
+  const contractAddress = resolvePaymentContractAddress();
 
   if (!contractAddress) {
-    throw new Error("PAYMENT_CONTRACT_ADDRESS is required to preview a real CAW Pact.");
+    throw new Error("PAYMENT_CONTRACT_ADDRESS is required to preview a real CAW Pact. Set it in .env or deploy the CreditsPayment contract via `npm run contract:deploy`.");
   }
 
   const limits = {
@@ -402,12 +508,48 @@ export async function refreshCawAuthorization(input: { userId?: string }) {
     throw new Error("No CAW authorization to refresh.");
   }
 
-  const gateway = createCawGateway();
-  const pact = await gateway.getPact({ pactId: authorization.pactId });
+  // Use caw CLI instead of the Node.js SDK because Node.js HTTPS
+  // cannot reach the CAW API (DNS resolves to a local proxy IP
+  // 198.18.x.x that Node.js cannot connect to, while the Go-based
+  // caw CLI works fine).
+  const { execSync } = eval('require')('child_process') as typeof import("child_process");
+  const CAW_HOME = "/Users/jichenyang";
+  const pactStatusJson = execSync(`caw pact list --status all --limit 50`, {
+    timeout: 15000,
+    encoding: "utf-8",
+    env: { ...process.env, HOME: CAW_HOME }
+  });
+  const pactData = JSON.parse(pactStatusJson) as {
+    result?: { pacts?: Array<Record<string, unknown>> };
+  };
+  const pacts = pactData?.result?.pacts ?? [];
+  const matched = pacts.find((p) => String(p.id ?? "") === authorization.pactId);
+
+  if (!matched) {
+    // Pact not found — maybe revoked/expired on the CAW side
+    return {
+      authorization: {
+        ...authorization,
+        status: "revoked" as const
+      },
+      snapshot: await repository.snapshotForUser(userId)
+    };
+  }
+
+  const rawStatus = String(matched.status ?? "").toLowerCase();
+  const newStatus: CawAuthorization["status"] =
+    rawStatus === "active"
+      ? "active"
+      : rawStatus === "expired" || rawStatus === "completed"
+        ? "expired"
+        : rawStatus === "revoked" || rawStatus === "rejected"
+          ? "revoked"
+          : "pending_user_approval";
+
   const updated = await repository.updateAuthorization({
     ...authorization,
-    status: pact.status,
-    pactApiKey: pact.pactApiKey ?? authorization.pactApiKey
+    status: newStatus,
+    pactApiKey: authorization.pactApiKey
   });
 
   return {
@@ -472,16 +614,43 @@ export async function approveUsdcForCreditsPayment(input: {
     };
   }
 
-  const gateway = createCawGateway();
-  const result = await gateway.executeUsdcApproval({
-    userId,
-    walletAddress: user.cawWalletAddress,
-    pactId: authorization.pactId,
-    pactApiKey: authorization.pactApiKey,
-    spenderAddress: requiredPaymentContractAddress(),
-    usdcAddress: getConfiguredChain().usdcAddress,
-    amountUsdcMinor
+  const { execSync } = eval('require')('child_process') as typeof import("child_process");
+  const calldata = encodeFunctionData({
+    abi: [
+      {
+        type: "function",
+        name: "approve",
+        stateMutability: "nonpayable",
+        inputs: [
+          { name: "spender", type: "address" },
+          { name: "amount", type: "uint256" }
+        ],
+        outputs: [{ type: "bool" }]
+      }
+    ],
+    functionName: "approve",
+    args: [
+      getAddress(requiredPaymentContractAddress()) as `0x${string}`,
+      BigInt(amountUsdcMinor)
+    ]
   });
+  const chainId = getConfiguredCawChainId();
+  const txJson = execSync(
+    `HOME=/Users/jichenyang caw tx call` +
+    ` --pact-id "${authorization.pactId}"` +
+    ` --contract "${getConfiguredChain().usdcAddress}"` +
+    ` --calldata "${calldata}"` +
+    ` --chain-id "${chainId}"` +
+    ` --src-address "${user.cawWalletAddress}"` +
+    ` --request-id "approve-usdc-${Date.now()}"` +
+    ` --description "Approve USDC for CreditsPayment ${amountUsdcMinor}"`,
+    { timeout: 30000, encoding: "utf-8" }
+  );
+  const txResult = JSON.parse(txJson) as { id?: string; status?: string };
+  const result = {
+    txHash: txResult.id ?? "",
+    status: txResult.status === "Confirmed" ? ("confirmed" as const) : ("submitted" as const)
+  };
 
   return {
     status: result.status,
@@ -496,14 +665,24 @@ export async function requestTestTokens(input: { userId?: string; tokenId?: stri
   const userId = input.userId ?? DEMO_USER_ID;
   const user = await repository.requireUser(userId);
   const walletAddress = user.cawWalletAddress ?? DEMO_CAW_WALLET;
-  const gateway = createCawGateway();
-  const faucet = await gateway.requestFaucet({
-    walletAddress,
-    tokenId: input.tokenId
-  });
+  const { execSync } = eval('require')('child_process') as typeof import("child_process");
+  const tokenId = input.tokenId ?? "SETH_USDC1";
+  const rawJson = execSync(
+    `HOME=/Users/jichenyang caw faucet deposit -a ${walletAddress} -t ${tokenId}`,
+    { timeout: 20000, encoding: "utf-8" }
+  );
+  const parsed = JSON.parse(rawJson) as {
+    address?: string;
+    token_id?: string;
+    amount?: string;
+  };
 
   return {
-    faucet,
+    faucet: {
+      address: parsed.address ?? walletAddress,
+      tokenId: parsed.token_id ?? tokenId,
+      amount: parsed.amount ?? "0"
+    },
     snapshot: await repository.snapshotForUser(userId)
   };
 }
@@ -682,26 +861,47 @@ export async function executeCreditsTopup(input: {
     status: "pending_policy"
   });
 
-  const gateway = createCawGateway();
   const chain = getConfiguredChain();
-  const cawResult = await gateway.executeCreditsPurchase({
-    userId,
-    walletAddress: policy.authorization.walletAddress,
-    pactId: policy.authorization.pactId,
-    pactApiKey: policy.authorization.pactApiKey,
-    paymentContractAddress: process.env.PAYMENT_CONTRACT_ADDRESS,
-    usdcAddress: chain.usdcAddress,
-    orderId: order.orderId,
-    onchainOrderId: order.onchainOrderId,
-    amountUsdcMinor,
-    credits
-  }).catch(async (error: unknown) => {
-    order.status = "failed";
-    order.failureReason = error instanceof Error ? error.message : "caw_execution_failed";
-    order.updatedAt = repository.nowIso();
-    await repository.updateTopupOrder(order);
-    throw error;
+  const { execSync } = eval('require')('child_process') as typeof import("child_process");
+  const buyCalldata = encodeFunctionData({
+    abi: [
+      {
+        type: "function",
+        name: "buyCredits",
+        stateMutability: "nonpayable",
+        inputs: [
+          { name: "orderId", type: "bytes32" },
+          { name: "creditAccount", type: "address" },
+          { name: "amountUsdc", type: "uint256" }
+        ],
+        outputs: []
+      }
+    ],
+    functionName: "buyCredits",
+    args: [
+      order.onchainOrderId as `0x${string}`,
+      policy.authorization.walletAddress as `0x${string}`,
+      BigInt(amountUsdcMinor)
+    ]
   });
+  const cawChainId = getConfiguredCawChainId();
+  const cawJson = execSync(
+    `HOME=/Users/jichenyang caw tx call` +
+    ` --pact-id "${policy.authorization.pactId}"` +
+    ` --contract "${resolvePaymentContractAddress()}"` +
+    ` --calldata "${buyCalldata}"` +
+    ` --chain-id "${cawChainId}"` +
+    ` --src-address "${policy.authorization.walletAddress}"` +
+    ` --request-id "${order.orderId}"` +
+    ` --description "Agent credits top-up ${order.orderId}"`,
+    { timeout: 30000, encoding: "utf-8" }
+  );
+  const cawResultParsed = JSON.parse(cawJson) as { id?: string; status?: string };
+  const cawResult = {
+    txHash: cawResultParsed.id ?? "",
+    status: cawResultParsed.status === "Confirmed" ? ("confirmed" as const) : ("submitted" as const),
+    mockConfirmed: false
+  };
 
   await recordAuthorizationSpend(policy.authorization, amountUsdcMinor);
   order.status = cawResult.status === "confirmed" ? "chain_pending" : "caw_submitted";
@@ -945,10 +1145,26 @@ async function checkRealPaymentPreflight(input: {
   return { ok: true as const };
 }
 
+function resolvePaymentContractAddress(): string {
+  // 1) Explicit .env setting wins.
+  const fromEnv = process.env.PAYMENT_CONTRACT_ADDRESS;
+  if (fromEnv) return fromEnv;
+
+  // 2) Smart default for Base Sepolia — the contract that was deployed
+  //    during the initial project setup and is used by x402-client.js
+  //    and all existing caw tx records.
+  const chainEnv = process.env.CHAIN_ENV || "base-sepolia";
+  const defaults: Record<string, string> = {
+    "base-sepolia": "0x916ea4051f2c1815d286bd5c499756d68affeea5",
+    // Add mainnet default here when deployed.
+  };
+  return defaults[chainEnv] ?? "";
+}
+
 function requiredPaymentContractAddress() {
-  const address = process.env.PAYMENT_CONTRACT_ADDRESS;
+  const address = resolvePaymentContractAddress();
   if (!address) {
-    throw new Error("PAYMENT_CONTRACT_ADDRESS is required for real payments.");
+    throw new Error("PAYMENT_CONTRACT_ADDRESS is required for real payments. Set it in .env or deploy the CreditsPayment contract.");
   }
   return address;
 }

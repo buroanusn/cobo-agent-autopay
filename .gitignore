@@ -6,3 +6,6 @@ node_modules/
 next-env.d.ts
 dist/
 prisma/migrations/
+.DS_Store
+*.db
+*.db-journal
