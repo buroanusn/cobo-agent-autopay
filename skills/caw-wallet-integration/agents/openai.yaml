@@ -1,0 +1,4 @@
+interface:
+  display_name: "CAW Wallet Integration"
+  short_description: "CAW Pact wallet integration patterns"
+  default_prompt: "Use $caw-wallet-integration to wire CAW wallet authorization, Pact policy checks, and contract execution."

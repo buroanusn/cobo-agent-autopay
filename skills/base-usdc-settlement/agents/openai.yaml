@@ -1,0 +1,4 @@
+interface:
+  display_name: "Base USDC Settlement"
+  short_description: "Base USDC payment and settlement flow"
+  default_prompt: "Use $base-usdc-settlement to implement Base USDC payment contracts, event listeners, and idempotent settlement."
