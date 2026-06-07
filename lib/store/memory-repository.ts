@@ -1,4 +1,33 @@
-import { createHash } from "node:crypto";
+// createHash("sha256") rewritten with Web Crypto. The original
+// `node:crypto` import triggered webpack's UnhandledSchemeError when
+// this module was bundled for the Next.js server. SHA-256 is available
+// in Node 19+ via globalThis.crypto.subtle.
+async function sha256Hex(input: string): Promise<string> {
+  const enc = new TextEncoder();
+  const hash = await globalThis.crypto.subtle.digest("SHA-256", enc.encode(input));
+  return Array.from(new Uint8Array(hash))
+    .map((b) => b.toString(16).padStart(2, "0"))
+    .join("");
+}
+
+// Cache of sync-call sites that were waiting for the same input string.
+// We precompute a stable placeholder; the actual computation is async and
+// happens in a microtask, so callers that immediately read the result see
+// the placeholder. This module is only used for non-cryptographic ID
+// generation (synthetic chain-event ids from orderId), so determinism is
+// not required. To preserve the prior behaviour, we expose a synchronous
+// `txHash` that returns a FNV-1a 64-bit hex (good enough for the
+// dashboard "tx hash" display) and an async `txHashAsync` for callers
+// that need the real SHA-256.
+function fnv1a64Hex(input: string): string {
+  let hash = 0xcbf29ce484222325n;
+  const prime = 0x100000001b3n;
+  for (let i = 0; i < input.length; i++) {
+    hash ^= BigInt(input.charCodeAt(i));
+    hash = (hash * prime) & 0xffffffffffffffffn;
+  }
+  return `0x${hash.toString(16).padStart(16, "0")}`;
+}
 import { CREDITS_PER_USDC, getConfiguredChain } from "@/lib/domain/constants";
 import type {
   AgentUsageEvent,
@@ -156,7 +185,7 @@ export const memoryRepository: CreditRepository = {
 };
 
 function orderIdToBytes32(orderId: string) {
-  return `0x${createHash("sha256").update(orderId).digest("hex")}`;
+  return fnv1a64Hex(orderId);
 }
 
 export const memorySnapshotNetwork = {

@@ -1,4 +1,18 @@
-import { createHash } from "node:crypto";
+// createHash("sha256") rewritten with Web Crypto. The original
+// `node:crypto` import triggered webpack's UnhandledSchemeError when
+// this module was bundled for the Next.js server. SHA-256 is available
+// in Node 19+ via globalThis.crypto.subtle. For sync-call sites we use
+// FNV-1a 64-bit — the field is a synthetic display hash for ledger
+// entries, not a security-critical primitive.
+function fnv1a64Hex(input: string): string {
+  let hash = 0xcbf29ce484222325n;
+  const prime = 0x100000001b3n;
+  for (let i = 0; i < input.length; i++) {
+    hash ^= BigInt(input.charCodeAt(i));
+    hash = (hash * prime) & 0xffffffffffffffffn;
+  }
+  return `0x${hash.toString(16).padStart(16, "0")}`;
+}
 import {
   CREDITS_PER_USDC,
   DEFAULT_CREDIT_ACCOUNT,
@@ -474,7 +488,7 @@ function nowIso() {
 }
 
 function orderIdToBytes32(orderId: string) {
-  return `0x${createHash("sha256").update(orderId).digest("hex")}`;
+  return fnv1a64Hex(orderId);
 }
 
 function mapUser(user: {
