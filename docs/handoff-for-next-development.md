@@ -1,6 +1,31 @@
 # Handoff For Next Development
 
-Last updated: 2026-06-08, Asia/Shanghai.
+Last updated: 2026-06-09, Asia/Shanghai.
+
+## 2026-06-09 Update: Cobo ID Account Binding
+
+Started the first missing registration/binding gap from the target product flow:
+
+- Added a first-class Cobo ID binding step after email login.
+- Added Prisma fields on `User`:
+  - `coboId`
+  - `coboIdBoundAt`
+- Added migration:
+  - `prisma/migrations/20260609093000_add_user_cobo_id/`
+- Added `POST /api/account/cobo-id` for logged-in users to bind a Cobo ID.
+- Added duplicate Cobo ID checks across users.
+- Cobo ID is normalized to lowercase and constrained to a short visible ID format.
+- Dashboard now shows Cobo ID as the first step before CAW wallet creation,
+  manual CAW Wallet UUID binding, and pairing code generation.
+- Backend now blocks CAW wallet creation/binding, pairing code generation,
+  Pact creation, USDC approval, credits top-up, and Venice x402 top-up until
+  the logged-in account has a Cobo ID.
+
+Important limitation:
+
+- This does not claim external Cobo account ownership is verified by a Cobo API.
+  It records the user's Cobo ID as the Web account binding identifier. Wallet
+  ownership is still verified by CAW wallet/App pairing.
 
 ## 2026-06-08 Update: Venice Pact Template And Dashboard Panel
 

@@ -57,6 +57,8 @@ enum CawOnboardingStatus {
 model User {
   id                   String                       @id
   email                String                       @unique
+  coboId               String?                      @unique
+  coboIdBoundAt        DateTime?
   cawWalletId          String?                      @unique
   cawWalletAddress     String?                      @unique
   createdAt            DateTime                     @default(now())

@@ -72,6 +72,45 @@ export async function getDashboardSnapshot(userId = DEMO_USER_ID) {
   return getCreditRepository().snapshotForUser(userId);
 }
 
+export async function bindCoboAccount(input: { userId?: string; coboId?: string }) {
+  const repository = getCreditRepository();
+  const userId = input.userId ?? DEMO_USER_ID;
+  const user = await repository.requireUser(userId);
+  const coboId = normalizeCoboId(input.coboId);
+  const existing = await repository.findUserByCoboId(coboId);
+  if (existing && existing.id !== user.id) {
+    throw new Error(`This Cobo ID is already bound to ${existing.email}.`);
+  }
+
+  const currentCoboId = user.coboId?.toLowerCase();
+  const coboIdChanged = currentCoboId !== coboId;
+  if (currentCoboId && currentCoboId !== coboId) {
+    const [creditsAuthorization, veniceAuthorization] = await Promise.all([
+      repository.getActiveAuthorization(userId, "credits_payment"),
+      repository.getActiveAuthorization(userId, "venice_x402")
+    ]);
+    if (user.cawWalletId || user.cawWalletAddress || creditsAuthorization || veniceAuthorization) {
+      throw new Error("Cobo ID cannot be changed after a CAW wallet or Pact has been bound.");
+    }
+  }
+
+  const updated = await repository.updateUser({
+    ...user,
+    coboId,
+    coboIdBoundAt: coboIdChanged ? repository.nowIso() : user.coboIdBoundAt ?? repository.nowIso()
+  });
+
+  return {
+    user: updated,
+    binding: {
+      coboId: updated.coboId,
+      coboIdBoundAt: updated.coboIdBoundAt,
+      status: "bound"
+    },
+    snapshot: await repository.snapshotForUser(userId)
+  };
+}
+
 export async function getCawIntegrationStatus(userId = DEMO_USER_ID) {
   const snapshot = await getDashboardSnapshot(userId);
   const runtime = await getUserCawRuntimeStatus(snapshot.user, snapshot.cawOnboardingSession);
@@ -82,6 +121,9 @@ export async function getCawIntegrationStatus(userId = DEMO_USER_ID) {
   const remainingUsdcMinor = snapshot.pactDetails?.remainingUsdcMinor ?? 0;
   const expiresAt = snapshot.authorization?.expiresAt;
 
+  if (!snapshot.user.coboId) {
+    missing.push("Cobo ID binding");
+  }
   if (!snapshot.user.cawWalletAddress) {
     missing.push("connected CAW wallet address");
   }
@@ -198,6 +240,7 @@ export async function advanceCawWalletOnboarding(input: {
   const repository = getCreditRepository();
   const userId = input.userId ?? DEMO_USER_ID;
   const user = await repository.requireUser(userId);
+  requireCoboAccountBinding(user);
   const existing = await repository.getCawOnboardingSession(userId);
   const result = await runCawOnboard({
     userId,
@@ -336,6 +379,7 @@ export async function createPairingCode(input: { userId?: string }) {
   const repository = getCreditRepository();
   const userId = input.userId ?? DEMO_USER_ID;
   const user = await repository.requireUser(userId);
+  requireCoboAccountBinding(user);
   const onboarding = await repository.getCawOnboardingSession(userId);
   const walletId = getUserCawWalletId(user);
   if (!walletId) {
@@ -444,6 +488,7 @@ export async function connectCawWallet(input: {
   const repository = getCreditRepository();
   const userId = input.userId ?? DEMO_USER_ID;
   const user = await repository.requireUser(userId);
+  requireCoboAccountBinding(user);
   const walletId = input.cawWalletId?.trim() || getUserCawWalletId(user);
   if (!walletId) {
     throw new Error("CAW Wallet UUID is required.");
@@ -497,6 +542,7 @@ export async function createCawAuthorization(input: {
   const repository = getCreditRepository();
   const userId = input.userId ?? DEMO_USER_ID;
   const user = await repository.requireUser(userId);
+  requireCoboAccountBinding(user);
   const onboarding = await repository.getCawOnboardingSession(userId);
   const wallet = requireBoundCawWallet(user);
   const createdAt = repository.nowIso();
@@ -583,6 +629,7 @@ export async function previewCawAuthorization(input: {
   const repository = getCreditRepository();
   const userId = input.userId ?? DEMO_USER_ID;
   const user = await repository.requireUser(userId);
+  requireCoboAccountBinding(user);
   const wallet = requireBoundCawWallet(user);
   const chain = getConfiguredChain();
   const coboChainId = getConfiguredCawChainId();
@@ -644,6 +691,7 @@ export async function previewVeniceX402Authorization(input: {
   const repository = getCreditRepository();
   const userId = input.userId ?? DEMO_USER_ID;
   const user = await repository.requireUser(userId);
+  requireCoboAccountBinding(user);
   requireBoundCawWallet(user);
   await requireVeniceCliWallet(userId);
   const requirements = await discoverVeniceX402Requirements();
@@ -672,6 +720,7 @@ export async function createVeniceX402Authorization(input: {
   const repository = getCreditRepository();
   const userId = input.userId ?? DEMO_USER_ID;
   const user = await repository.requireUser(userId);
+  requireCoboAccountBinding(user);
   const wallet = requireBoundCawWallet(user);
   await requireVeniceCliWallet(userId);
   const { preview, requirements, selected } = await previewVeniceX402Authorization({
@@ -773,6 +822,7 @@ export async function approveUsdcForCreditsPayment(input: {
   const repository = getCreditRepository();
   const userId = input.userId ?? DEMO_USER_ID;
   const user = await repository.requireUser(userId);
+  requireCoboAccountBinding(user);
   const account = await repository.requireCreditAccount(userId);
   const authorization = await repository.getActiveAuthorization(userId);
   const wallet = requireBoundCawWallet(user);
@@ -1143,6 +1193,7 @@ export async function executeCreditsTopup(input: {
   const userId = input.userId ?? DEMO_USER_ID;
   const reason = input.reason ?? "low_balance";
   const user = await repository.requireUser(userId);
+  requireCoboAccountBinding(user);
   await refreshPendingTopupOrders({ userId });
   const account = await repository.requireCreditAccount(userId);
 
@@ -1764,6 +1815,26 @@ function parseVeniceAcceptAmountMinor(value: string | undefined) {
 
 function positiveMinor(value: number | undefined, fallback: number) {
   return Number.isFinite(value) && Number(value) > 0 ? Math.floor(Number(value)) : fallback;
+}
+
+function normalizeCoboId(value: string | undefined) {
+  const trimmed = value?.trim() ?? "";
+  if (!trimmed) {
+    throw new Error("Cobo ID is required.");
+  }
+  if (trimmed.length < 3 || trimmed.length > 128) {
+    throw new Error("Cobo ID must be between 3 and 128 characters.");
+  }
+  if (!/^[A-Za-z0-9][A-Za-z0-9._:@+-]*$/.test(trimmed)) {
+    throw new Error("Cobo ID can contain letters, numbers, dots, underscores, colons, @, +, and hyphens.");
+  }
+  return trimmed.toLowerCase();
+}
+
+function requireCoboAccountBinding(user: User) {
+  if (!user.coboId) {
+    throw new Error("Bind your Cobo ID before creating or pairing a CAW wallet.");
+  }
 }
 
 function usdcMinorToUsdString(value: number) {

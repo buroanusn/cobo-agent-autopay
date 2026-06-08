@@ -176,6 +176,12 @@ export const prismaRepository: CreditRepository = {
     });
     return mapUser(created);
   },
+  async findUserByCoboId(coboId: string): Promise<User | undefined> {
+    const user = await prisma.user.findFirst({
+      where: { coboId: { equals: coboId, mode: "insensitive" } }
+    });
+    return user ? mapUser(user) : undefined;
+  },
   async findUserByCawWalletId(walletId: string): Promise<User | undefined> {
     const user = await prisma.user.findUnique({ where: { cawWalletId: walletId } });
     return user ? mapUser(user) : undefined;
@@ -210,6 +216,8 @@ export const prismaRepository: CreditRepository = {
       where: { id: user.id },
       data: {
         email: user.email,
+        coboId: user.coboId,
+        coboIdBoundAt: user.coboIdBoundAt ? new Date(user.coboIdBoundAt) : null,
         cawWalletId: user.cawWalletId,
         cawWalletAddress: user.cawWalletAddress
       }
@@ -569,6 +577,8 @@ function orderIdToBytes32(orderId: string) {
 function mapUser(user: {
   id: string;
   email: string;
+  coboId: string | null;
+  coboIdBoundAt: Date | null;
   cawWalletId: string | null;
   cawWalletAddress: string | null;
   createdAt: Date;
@@ -576,6 +586,8 @@ function mapUser(user: {
   return {
     id: user.id,
     email: user.email,
+    coboId: user.coboId ?? undefined,
+    coboIdBoundAt: user.coboIdBoundAt?.toISOString(),
     cawWalletId: user.cawWalletId ?? undefined,
     cawWalletAddress: user.cawWalletAddress ?? undefined,
     createdAt: user.createdAt.toISOString()
