@@ -3,6 +3,7 @@ import { CREDITS_PER_USDC, getConfiguredChain } from "@/lib/domain/constants";
 import type {
   AgentUsageEvent,
   CawAuthorization,
+  CawAuthorizationPurpose,
   CreditAccount,
   DashboardSnapshot,
   LedgerEntry,
@@ -64,8 +65,11 @@ export const memoryRepository: CreditRepository = {
     db.users.set(user.id, user);
     return user;
   },
-  async getActiveAuthorization(userId: string): Promise<CawAuthorization | undefined> {
-    return getActiveAuthorization(userId);
+  async getActiveAuthorization(
+    userId: string,
+    purpose?: CawAuthorizationPurpose
+  ): Promise<CawAuthorization | undefined> {
+    return getActiveAuthorization(userId, purpose);
   },
   async createAuthorization(authorization: CawAuthorization): Promise<CawAuthorization> {
     db.cawAuthorizations.set(authorization.id, authorization);

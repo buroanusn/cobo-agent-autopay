@@ -2,6 +2,56 @@
 
 Last updated: 2026-06-08, Asia/Shanghai.
 
+## 2026-06-08 Update: Venice Pact Template And Dashboard Panel
+
+Added the first real Venice x402 UI path:
+
+- Added a dedicated CAW authorization purpose field so Pact records are scoped:
+  - `credits_payment` remains the existing CreditsPayment authorization path.
+  - `venice_x402` is used only for Venice x402 top-up.
+- Added Prisma migration:
+  - `prisma/migrations/20260608103000_add_caw_authorization_purpose/`
+- Added Venice Pact APIs:
+  - `POST /api/venice/pact` with `previewOnly: true` generates a Venice
+    Pact preview/template.
+  - `POST /api/venice/pact` submits the Venice Pact through the user's CAW CLI
+    profile.
+  - `POST /api/venice/pact/refresh` refreshes the Venice Pact status through
+    CAW CLI.
+- Venice Pact template is deterministic and explicitly scoped to:
+  - Base mainnet CAW chain ID `BASE_ETH`
+  - Base mainnet native USDC token ID `BASE_USDC`
+  - Base USDC contract `0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913`
+  - Venice x402 payTo discovered from the real 402 requirement
+  - user-visible single/daily/monthly limits and validity
+- `GET /api/venice/x402-topup` now discovers Base mainnet USDC requirements
+  independent of the current testnet app config. `POST /api/venice/x402-topup`
+  still requires `CHAIN_ENV=base-mainnet`.
+- `POST /api/venice/x402-topup` now reads only the active `venice_x402` Pact
+  and records product-side daily/monthly Pact spend after successful CAW x402
+  execution.
+- Dashboard now has a Venice AI panel for:
+  - billing balance
+  - x402 payment requirement discovery
+  - Venice Pact preview / submit / refresh
+  - explicit real-payment checkbox plus browser confirmation before top-up
+  - standalone Venice inference
+- `POST /api/venice/x402-topup` also requires `confirmed: true` in the
+  request body; the dashboard only sends it after the explicit UI confirmation.
+- The old mock x402 resource button is no longer exposed in the main dashboard
+  flow.
+
+Current validation for this update:
+
+```text
+npm run db:generate
+npm run typecheck
+npm run lint
+npm run contract:compile
+npm run build
+git diff --check
+```
+
 ## 2026-06-08 Update: Real Mainnet Direction
 
 Product direction changed from Base Sepolia-first verification to real

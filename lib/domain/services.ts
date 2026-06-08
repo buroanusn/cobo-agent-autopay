@@ -15,13 +15,15 @@ import {
 } from "@/lib/caw/cli";
 import { draftCawPactFromIntent } from "@/lib/caw/pact-drafter";
 import {
+  BASE_CHAIN,
   CREDITS_PER_USDC,
   DEFAULT_SPEND_POLICY,
   DEMO_USER_ID,
+  USDC_MINOR_UNITS,
   getConfiguredCawChainId,
   getConfiguredChain
 } from "@/lib/domain/constants";
-import { creditsToUsdcMinor, usdcMinorToCredits } from "@/lib/domain/money";
+import { creditsToUsdcMinor, formatUsdc, usdcMinorToCredits } from "@/lib/domain/money";
 import type {
   CawAuthorization,
   CawOnboardingStatus,
@@ -30,11 +32,24 @@ import type {
   User
 } from "@/lib/domain/types";
 import { getCreditRepository } from "@/lib/store";
+import {
+  discoverVeniceX402Requirements,
+  pickVeniceBaseUsdcAccept,
+  type VeniceX402Accept
+} from "@/lib/venice/topup";
 import { createPublicClient, formatUnits, getAddress, http } from "viem";
 import { base, baseSepolia } from "viem/chains";
 
 type AutoTopupReason = "low_balance" | "insufficient_balance" | "manual" | "x402_resource";
 const DEFAULT_X402_RESOURCE_PRICE_USDC_MINOR = 10_000;
+const VENICE_CAW_CHAIN_ID = "BASE_ETH";
+const VENICE_USDC_TOKEN_ID = "BASE_USDC";
+const DEFAULT_VENICE_PACT_LIMITS = {
+  singleLimitUsdcMinor: 1 * USDC_MINOR_UNITS,
+  dailyLimitUsdcMinor: 5 * USDC_MINOR_UNITS,
+  monthlyLimitUsdcMinor: 20 * USDC_MINOR_UNITS,
+  validDays: 7
+} as const;
 
 export type CawPactPreview = {
   intent: string;
@@ -487,12 +502,13 @@ export async function createCawAuthorization(input: {
   const createdAt = repository.nowIso();
   const { preview } = await previewCawAuthorization(input);
   const expiresAt = new Date(
-    Date.now() + (input.validDays ?? DEFAULT_SPEND_POLICY.validDays) * 24 * 60 * 60 * 1000
+    Date.now() + preview.limits.validDays * 24 * 60 * 60 * 1000
   ).toISOString();
   const pactResult =
     onboarding?.status === "wallet_active"
       ? await submitCawCliPact({
           userId,
+          name: "Agent credits auto top-up",
           intent: preview.intent,
           originalIntent: preview.originalIntent,
           executionPlan: preview.executionPlan,
@@ -525,6 +541,7 @@ export async function createCawAuthorization(input: {
   const authorization: CawAuthorization = {
     id: repository.createId("auth"),
     userId,
+    purpose: "credits_payment",
     walletAddress: wallet.walletAddress,
     pactId: pact.pactId,
     pactApiKey: pact.pactApiKey,
@@ -608,6 +625,119 @@ export async function previewCawAuthorization(input: {
       warnings: draft.warnings,
       limits: draft.limits
     }
+  };
+}
+
+export async function previewVeniceX402Authorization(input: {
+  userId?: string;
+  amountUsdcMinor?: number;
+  dailyLimitUsdcMinor?: number;
+  monthlyLimitUsdcMinor?: number;
+  validDays?: number;
+}): Promise<{
+  preview: CawPactPreview;
+  requirements: Awaited<ReturnType<typeof discoverVeniceX402Requirements>>;
+  selected: VeniceX402Accept;
+  authorization?: CawAuthorization;
+  snapshot: Awaited<ReturnType<typeof getDashboardSnapshot>>;
+}> {
+  const repository = getCreditRepository();
+  const userId = input.userId ?? DEMO_USER_ID;
+  const user = await repository.requireUser(userId);
+  requireBoundCawWallet(user);
+  await requireVeniceCliWallet(userId);
+  const requirements = await discoverVeniceX402Requirements();
+  const selected = pickVeniceBaseUsdcAccept(requirements);
+  const preview = buildVeniceX402PactPreview({
+    accept: selected,
+    limits: normalizeVenicePactLimits(input)
+  });
+
+  return {
+    preview,
+    requirements,
+    selected,
+    authorization: await repository.getActiveAuthorization(userId, "venice_x402"),
+    snapshot: await repository.snapshotForUser(userId)
+  };
+}
+
+export async function createVeniceX402Authorization(input: {
+  userId?: string;
+  amountUsdcMinor?: number;
+  dailyLimitUsdcMinor?: number;
+  monthlyLimitUsdcMinor?: number;
+  validDays?: number;
+}) {
+  const repository = getCreditRepository();
+  const userId = input.userId ?? DEMO_USER_ID;
+  const user = await repository.requireUser(userId);
+  const wallet = requireBoundCawWallet(user);
+  await requireVeniceCliWallet(userId);
+  const { preview, requirements, selected } = await previewVeniceX402Authorization({
+    ...input,
+    userId
+  });
+  const createdAt = repository.nowIso();
+  const expiresAt = new Date(
+    Date.now() + preview.limits.validDays * 24 * 60 * 60 * 1000
+  ).toISOString();
+  const pactResult = await submitCawCliPact({
+    userId,
+    name: "Venice x402 USDC top-up",
+    intent: preview.intent,
+    originalIntent: preview.originalIntent,
+    executionPlan: preview.executionPlan,
+    policies: preview.policies,
+    completionConditions: preview.completionConditions
+  });
+  const authorization: CawAuthorization = {
+    id: repository.createId("auth"),
+    userId,
+    purpose: "venice_x402",
+    walletAddress: wallet.walletAddress,
+    pactId: pactResult.pactId,
+    status: pactResult.status,
+    singleLimitUsdcMinor: preview.limits.singleLimitUsdcMinor,
+    dailyLimitUsdcMinor: preview.limits.dailyLimitUsdcMinor,
+    monthlyLimitUsdcMinor: preview.limits.monthlyLimitUsdcMinor,
+    spentTodayUsdcMinor: 0,
+    spentMonthUsdcMinor: 0,
+    dailyWindowStart: createdAt,
+    monthlyWindowStart: createdAt,
+    expiresAt,
+    createdAt
+  };
+
+  await repository.createAuthorization(authorization);
+
+  return {
+    authorization,
+    preview,
+    requirements,
+    selected,
+    snapshot: await repository.snapshotForUser(userId)
+  };
+}
+
+export async function refreshVeniceX402Authorization(input: { userId?: string }) {
+  const repository = getCreditRepository();
+  const userId = input.userId ?? DEMO_USER_ID;
+  await requireVeniceCliWallet(userId);
+  const authorization = await repository.getActiveAuthorization(userId, "venice_x402");
+  if (!authorization) {
+    throw new Error("No Venice x402 CAW authorization to refresh.");
+  }
+
+  const pact = await showCawCliPact({ userId, pactId: authorization.pactId });
+  const updated = await repository.updateAuthorization({
+    ...authorization,
+    status: pact.status
+  });
+
+  return {
+    authorization: updated,
+    snapshot: await repository.snapshotForUser(userId)
   };
 }
 
@@ -1497,6 +1627,151 @@ function requiredPaymentContractAddress() {
     throw new Error("PAYMENT_CONTRACT_ADDRESS is required for real payments.");
   }
   return address;
+}
+
+async function requireVeniceCliWallet(userId: string) {
+  const onboarding = await getCreditRepository().getCawOnboardingSession(userId);
+  if (onboarding?.status !== "wallet_active") {
+    throw new Error("Venice x402 requires a CAW wallet created through the CLI onboarding flow.");
+  }
+  return onboarding;
+}
+
+function normalizeVenicePactLimits(input: {
+  amountUsdcMinor?: number;
+  dailyLimitUsdcMinor?: number;
+  monthlyLimitUsdcMinor?: number;
+  validDays?: number;
+}) {
+  const singleLimitUsdcMinor = positiveMinor(
+    input.amountUsdcMinor,
+    DEFAULT_VENICE_PACT_LIMITS.singleLimitUsdcMinor
+  );
+  const dailyLimitUsdcMinor = Math.max(
+    singleLimitUsdcMinor,
+    positiveMinor(input.dailyLimitUsdcMinor, DEFAULT_VENICE_PACT_LIMITS.dailyLimitUsdcMinor)
+  );
+  const monthlyLimitUsdcMinor = Math.max(
+    dailyLimitUsdcMinor,
+    positiveMinor(input.monthlyLimitUsdcMinor, DEFAULT_VENICE_PACT_LIMITS.monthlyLimitUsdcMinor)
+  );
+  const validDays =
+    Number.isFinite(input.validDays) && Number(input.validDays) > 0
+      ? Math.floor(Number(input.validDays))
+      : DEFAULT_VENICE_PACT_LIMITS.validDays;
+
+  return {
+    singleLimitUsdcMinor,
+    dailyLimitUsdcMinor,
+    monthlyLimitUsdcMinor,
+    validDays
+  };
+}
+
+function buildVeniceX402PactPreview(input: {
+  accept: VeniceX402Accept;
+  limits: CawPactPreview["limits"];
+}): CawPactPreview {
+  const usdcAddress = getAddress(BASE_CHAIN.usdcAddress);
+  const payTo = getAddress(input.accept.payTo);
+  const amountWarning = veniceRequirementWarning(input.accept, input.limits.singleLimitUsdcMinor);
+  const warnings = [
+    "This Pact is for Venice x402 top-up on Base mainnet USDC only.",
+    `Venice x402 payTo address discovered from the 402 requirement: ${payTo}.`,
+    ...(amountWarning ? [amountWarning] : [])
+  ];
+
+  return {
+    intent:
+      `Authorize Venice AI x402 top-ups on Base mainnet using USDC. ` +
+      `Each top-up is capped at ${formatUsdc(input.limits.singleLimitUsdcMinor)} USDC; ` +
+      `total spend is capped at ${formatUsdc(input.limits.monthlyLimitUsdcMinor)} USDC while this Pact is valid.`,
+    originalIntent:
+      `Create a Venice x402 top-up Pact for Base mainnet USDC. ` +
+      `Selected x402 network: eip155:8453. CAW token ID: ${VENICE_USDC_TOKEN_ID}. ` +
+      `USDC token: ${usdcAddress}. Venice payTo: ${payTo}.`,
+    executionPlan: [
+      `- Discover Venice x402 payment requirements from ${getVeniceTopupPathForPreview()} without spending funds.`,
+      `- Select only Base mainnet (eip155:8453) with native USDC (${usdcAddress}).`,
+      `- Execute Venice top-up through CAW CLI x402 with max amount ${input.limits.singleLimitUsdcMinor} minor USDC units.`,
+      "- Refuse the payment if Venice requests a different chain, a different asset, or an amount above the configured cap.",
+      "- Stop after the Venice API returns a successful top-up response; do not use this Pact for CreditsPayment or other contracts."
+    ].join("\n"),
+    policies: [
+      {
+        name: "venice-x402-base-usdc",
+        type: "contract_call",
+        rules: {
+          effect: "allow",
+          when: {
+            chain_in: [VENICE_CAW_CHAIN_ID],
+            target_in: [
+              {
+                chain_id: VENICE_CAW_CHAIN_ID,
+                contract_addr: usdcAddress
+              }
+            ]
+          },
+          deny_if: {
+            usage_limits: {
+              rolling_24h: {
+                tx_count_gt: 10
+              }
+            }
+          }
+        },
+        priority: 100,
+        is_active: true
+      }
+    ],
+    completionConditions: [
+      {
+        type: "time_elapsed",
+        threshold: String(input.limits.validDays * 24 * 60 * 60)
+      },
+      {
+        type: "amount_spent_usd",
+        threshold: usdcMinorToUsdString(input.limits.monthlyLimitUsdcMinor)
+      }
+    ],
+    draftedBy: "agent_deterministic",
+    warnings,
+    limits: input.limits
+  };
+}
+
+function veniceRequirementWarning(accept: VeniceX402Accept, singleLimitUsdcMinor: number) {
+  const requiredMinor = parseVeniceAcceptAmountMinor(accept.maxAmountRequired ?? accept.amount);
+  if (requiredMinor === undefined) {
+    return undefined;
+  }
+  if (requiredMinor > singleLimitUsdcMinor) {
+    return `Current single top-up cap is below Venice's discovered requirement (${formatUsdc(requiredMinor)} USDC); execution will be refused until the cap is increased.`;
+  }
+  return `Venice discovered requirement is at most ${formatUsdc(requiredMinor)} USDC for the selected x402 option.`;
+}
+
+function parseVeniceAcceptAmountMinor(value: string | undefined) {
+  if (!value) {
+    return undefined;
+  }
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    return undefined;
+  }
+  return Math.floor(parsed);
+}
+
+function positiveMinor(value: number | undefined, fallback: number) {
+  return Number.isFinite(value) && Number(value) > 0 ? Math.floor(Number(value)) : fallback;
+}
+
+function usdcMinorToUsdString(value: number) {
+  return (value / USDC_MINOR_UNITS).toFixed(6).replace(/\.?0+$/, "");
+}
+
+function getVeniceTopupPathForPreview() {
+  return "/api/v1/x402/top-up";
 }
 
 function requireBoundCawWallet(user: User) {

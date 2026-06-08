@@ -1,6 +1,7 @@
 import type {
   AgentUsageEvent,
   CawAuthorization,
+  CawAuthorizationPurpose,
   CreditAccount,
   DashboardSnapshot,
   LedgerEntry,
@@ -28,7 +29,10 @@ export type CreditRepository = {
   requireCreditAccount(userId: string): Promise<CreditAccount>;
   updateCreditAccount(account: CreditAccount): Promise<CreditAccount>;
   updateUser(user: User): Promise<User>;
-  getActiveAuthorization(userId: string): Promise<CawAuthorization | undefined>;
+  getActiveAuthorization(
+    userId: string,
+    purpose?: CawAuthorizationPurpose
+  ): Promise<CawAuthorization | undefined>;
   createAuthorization(authorization: CawAuthorization): Promise<CawAuthorization>;
   updateAuthorization(authorization: CawAuthorization): Promise<CawAuthorization>;
   createPairingSession(userId: string, session: CawPairingSession): Promise<CawPairingSession>;

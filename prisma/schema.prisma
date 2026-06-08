@@ -14,6 +14,11 @@ enum CawAuthorizationStatus {
   revoked
 }
 
+enum CawAuthorizationPurpose {
+  credits_payment
+  venice_x402
+}
+
 enum TopupOrderStatus {
   pending_policy
   caw_submitted
@@ -113,6 +118,7 @@ model CreditAccount {
 model CawAuthorization {
   id                    String                 @id
   userId                String
+  purpose               CawAuthorizationPurpose @default(credits_payment)
   walletAddress         String
   pactId                String
   pactApiKey            String?
@@ -129,6 +135,7 @@ model CawAuthorization {
   user                  User                   @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId, createdAt])
+  @@index([userId, purpose, createdAt])
   @@map("caw_authorizations")
 }
 

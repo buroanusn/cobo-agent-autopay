@@ -1,5 +1,5 @@
 import { runCawFetchX402 } from "@/lib/caw/cli";
-import { getConfiguredChain } from "@/lib/domain/constants";
+import { BASE_CHAIN, getConfiguredChain } from "@/lib/domain/constants";
 import type { CawAuthorization, User } from "@/lib/domain/types";
 import { getCreditRepository } from "@/lib/store";
 import { getVeniceBaseUrl } from "@/lib/venice/client";
@@ -43,11 +43,10 @@ export async function discoverVeniceX402Requirements() {
 }
 
 export function pickVeniceBaseUsdcAccept(requirements: VeniceX402Requirements) {
-  const chain = getConfiguredChain();
   const match = requirements.accepts.find(
     (accept) =>
       accept.network === BASE_MAINNET_NETWORK &&
-      accept.asset.toLowerCase() === chain.usdcAddress.toLowerCase()
+      accept.asset.toLowerCase() === BASE_CHAIN.usdcAddress.toLowerCase()
   );
   if (!match) {
     throw new Error("Venice did not offer a Base mainnet USDC x402 payment option.");
@@ -62,7 +61,14 @@ export async function runVeniceX402Topup(input: {
   assertBaseMainnet();
   const repository = getCreditRepository();
   const user = await repository.requireUser(input.userId);
-  const authorization = await repository.getActiveAuthorization(input.userId);
+  const onboarding = await repository.getCawOnboardingSession(input.userId);
+  if (onboarding?.status !== "wallet_active") {
+    throw new Error("Venice x402 top-up requires this user's CAW CLI wallet profile.");
+  }
+  const authorization = await repository.getActiveAuthorization(input.userId, "venice_x402");
+  if (authorization) {
+    refreshAuthorizationWindows(authorization);
+  }
   validateTopupReadiness(user, authorization, input.amountUsdcMinor);
   const requirements = await discoverVeniceX402Requirements();
   const accept = pickVeniceBaseUsdcAccept(requirements);
@@ -90,13 +96,19 @@ export async function runVeniceX402Topup(input: {
     );
   }
 
+  refreshAuthorizationWindows(authorization);
+  authorization.spentTodayUsdcMinor += input.amountUsdcMinor;
+  authorization.spentMonthUsdcMinor += input.amountUsdcMinor;
+  await repository.updateAuthorization(authorization);
+
   return {
     ok: true,
     responseStatus,
     requirements,
     selected: accept,
     amountUsdcMinor: input.amountUsdcMinor,
-    responsePreview: redact(result.stdout).slice(0, 1200)
+    responsePreview: redact(result.stdout).slice(0, 1200),
+    snapshot: await repository.snapshotForUser(input.userId)
   };
 }
 
@@ -116,7 +128,10 @@ function validateTopupReadiness(
     throw new Error("Create and bind this user's CAW wallet before using Venice x402 top-up.");
   }
   if (!authorization || authorization.status !== "active") {
-    throw new Error("Create and approve an active CAW Pact before using Venice x402 top-up.");
+    throw new Error("Create and approve an active Venice x402 CAW Pact before using Venice x402 top-up.");
+  }
+  if (authorization.purpose !== "venice_x402") {
+    throw new Error("The active Pact is not scoped for Venice x402 top-up.");
   }
   if (authorization.pactId.startsWith("mock_")) {
     throw new Error("Mock Pact cannot be used for a real Venice x402 top-up.");
@@ -127,8 +142,26 @@ function validateTopupReadiness(
   if (authorization.singleLimitUsdcMinor < amountUsdcMinor) {
     throw new Error("The requested Venice top-up exceeds the Pact single-payment limit.");
   }
+  if (authorization.dailyLimitUsdcMinor - authorization.spentTodayUsdcMinor < amountUsdcMinor) {
+    throw new Error("The active CAW Pact has no remaining daily spend for this Venice top-up.");
+  }
   if (authorization.monthlyLimitUsdcMinor - authorization.spentMonthUsdcMinor < amountUsdcMinor) {
     throw new Error("The active CAW Pact has no remaining monthly spend for this Venice top-up.");
+  }
+}
+
+function refreshAuthorizationWindows(authorization: CawAuthorization) {
+  const now = new Date();
+  const dailyStart = new Date(authorization.dailyWindowStart);
+  if (Number.isNaN(dailyStart.getTime()) || now.getTime() - dailyStart.getTime() >= 24 * 60 * 60 * 1000) {
+    authorization.spentTodayUsdcMinor = 0;
+    authorization.dailyWindowStart = now.toISOString();
+  }
+
+  const monthKey = now.toISOString().slice(0, 7);
+  if (authorization.monthlyWindowStart.slice(0, 7) !== monthKey) {
+    authorization.spentMonthUsdcMinor = 0;
+    authorization.monthlyWindowStart = now.toISOString();
   }
 }
 

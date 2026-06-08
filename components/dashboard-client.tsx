@@ -17,6 +17,13 @@ type ApiResult = {
     status: string;
   };
   preview?: CawPactPreview;
+  authorization?: DashboardSnapshot["authorization"];
+  requirements?: VeniceX402Requirements;
+  selected?: VeniceX402Accept;
+  balance?: unknown;
+  result?: unknown;
+  responseStatus?: number;
+  responsePreview?: string;
   status?: string;
   reason?: string;
   note?: string;
@@ -78,6 +85,26 @@ type CawPactPreview = {
     monthlyLimitUsdcMinor: number;
     validDays: number;
   };
+};
+
+type VeniceX402Accept = {
+  protocol?: string;
+  scheme?: string;
+  version?: number;
+  network: string;
+  asset: string;
+  amount?: string;
+  maxAmountRequired?: string;
+  payTo: string;
+  extra?: Record<string, unknown>;
+};
+
+type VeniceX402Requirements = {
+  x402Version?: number;
+  accepts: VeniceX402Accept[];
+  error?: string;
+  resource?: unknown;
+  authOptions?: unknown;
 };
 
 type CawStatusResult = {
@@ -380,8 +407,17 @@ export function DashboardClient({
     `${initialSnapshot.user.email.split("@")[0]?.replace(/[^a-zA-Z0-9_-]/g, "-") || "user"}-agent`
   );
   const [cawOnboardingAnswers, setCawOnboardingAnswers] = useState<Record<string, string>>({});
-  const [x402Proof, setX402Proof] = useState("");
-  const [x402Resource, setX402Resource] = useState<X402Resource | undefined>(undefined);
+  const [veniceBalance, setVeniceBalance] = useState<unknown>();
+  const [veniceRequirements, setVeniceRequirements] = useState<VeniceX402Requirements>();
+  const [veniceAccept, setVeniceAccept] = useState<VeniceX402Accept>();
+  const [venicePactPreview, setVenicePactPreview] = useState<CawPactPreview>();
+  const [veniceTopupAmount, setVeniceTopupAmount] = useState("1");
+  const [veniceDailyLimitUsdc, setVeniceDailyLimitUsdc] = useState("5");
+  const [veniceMonthlyLimitUsdc, setVeniceMonthlyLimitUsdc] = useState("20");
+  const [veniceValidDays, setVeniceValidDays] = useState("7");
+  const [venicePaymentConfirmed, setVenicePaymentConfirmed] = useState(false);
+  const [venicePrompt, setVenicePrompt] = useState("Summarize the current Venice balance and billing status.");
+  const [veniceInference, setVeniceInference] = useState<string>();
 
   useEffect(() => {
     void refresh();
@@ -441,19 +477,77 @@ export function DashboardClient({
         setPactPreview(result.preview);
       }
 
+      if (action === "venice-pact-preview" && result.preview) {
+        setVenicePactPreview(result.preview);
+        if (result.requirements) {
+          setVeniceRequirements(result.requirements);
+        }
+        if (result.selected) {
+          setVeniceAccept(result.selected);
+        }
+      }
+
       if (action === "authorize") {
         setPactPreview(undefined);
+      }
+
+      if (action === "venice-authorize") {
+        setVenicePactPreview(undefined);
       }
 
       if (action === "caw-onboard" && result.onboarding?.needsInput === false) {
         setCawOnboardingAnswers({});
       }
 
-      if (action === "x402-pay") {
-        const proof = result.x402?.paymentProof ?? result.order?.orderId;
-        if (proof) {
-          setX402Proof(proof);
-          setX402Resource(undefined);
+      if (action === "venice-topup") {
+        setVenicePaymentConfirmed(false);
+        if (result.requirements) {
+          setVeniceRequirements(result.requirements);
+        }
+        if (result.selected) {
+          setVeniceAccept(result.selected);
+        }
+      }
+
+      if (action === "venice-inference") {
+        setVeniceInference(extractVeniceText(result.result));
+      }
+
+      setMessage(statusMessage(action, result, lang));
+      void refresh();
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "Request failed.");
+    } finally {
+      setBusyAction(undefined);
+    }
+  }
+
+  async function callGetAction(action: string, path: string) {
+    setBusyAction(action);
+    setMessage(undefined);
+    setError(undefined);
+
+    try {
+      const response = await fetch(path, { cache: "no-store" });
+      const result = (await response.json()) as ApiResult;
+
+      if (response.status === 401) {
+        window.location.href = "/login";
+        return;
+      }
+      if (!response.ok || result.error) {
+        throw new Error(result.error ?? "Request failed.");
+      }
+
+      if (action === "venice-balance") {
+        setVeniceBalance(result.balance);
+      }
+      if (action === "venice-discover") {
+        if (result.requirements) {
+          setVeniceRequirements(result.requirements);
+        }
+        if (result.selected) {
+          setVeniceAccept(result.selected);
         }
       }
 
@@ -466,49 +560,23 @@ export function DashboardClient({
     }
   }
 
-  async function unlockX402Resource(proof: string) {
-    if (!proof) {
+  async function submitVeniceTopup(body: Record<string, unknown>) {
+    const amountMinor = Number(body.amountUsdcMinor);
+    if (!Number.isFinite(amountMinor) || amountMinor <= 0) {
+      setError("Venice top-up amount must be positive.");
       return;
     }
-
-    setBusyAction("x402-unlock");
-    setMessage(undefined);
-    setError(undefined);
-
-    try {
-      const response = await fetch("/api/x402/resource", {
-        method: "POST",
-        headers: {
-          "content-type": "application/json",
-          "x-payment-proof": proof
-        },
-        body: JSON.stringify({ paymentProof: proof })
-      });
-      const result = (await response.json()) as ApiResult;
-
-      if (response.status === 401) {
-        window.location.href = "/login";
-        return;
-      }
-      if (response.status === 402) {
-        setMessage(copy[lang].x402UnlockPending);
-        void refresh();
-        return;
-      }
-      if (!response.ok || result.error) {
-        throw new Error(result.error ?? "Request failed.");
-      }
-
-      if (result.resource) {
-        setX402Resource(result.resource);
-      }
-      setMessage(copy[lang].x402UnlockOk);
-      void refresh();
-    } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "Request failed.");
-    } finally {
-      setBusyAction(undefined);
+    const amountLabel = formatUsdc(amountMinor);
+    const confirmed = window.confirm(
+      `确认通过 CAW x402 在 Base mainnet 支付真实 ${amountLabel} USDC 给 Venice？`
+    );
+    if (!confirmed) {
+      return;
     }
+    await callAction("venice-topup", "/api/venice/x402-topup", {
+      ...body,
+      confirmed: true
+    });
   }
 
   async function logout() {
@@ -533,14 +601,20 @@ export function DashboardClient({
   const nextStep = getNextStep(missingItems);
   const recentOrders = snapshot.topupOrders.slice(0, 6);
   const recentLedgerEntries = snapshot.ledgerEntries.slice(0, 6);
-  const latestX402Order = snapshot.topupOrders.find((order) => order.reason === "x402_resource");
-  const activeX402Proof = x402Proof || latestX402Order?.orderId || "";
   const pactBody = buildPactBody({
     intent: pactIntent,
     singleLimitUsdc,
     dailyLimitUsdc,
     monthlyLimitUsdc,
     validDays
+  });
+  const veniceAuthorization = snapshot.veniceAuthorization;
+  const venicePactActive = veniceAuthorization?.status === "active";
+  const venicePactBody = buildVenicePactBody({
+    amountUsdc: veniceTopupAmount,
+    dailyLimitUsdc: veniceDailyLimitUsdc,
+    monthlyLimitUsdc: veniceMonthlyLimitUsdc,
+    validDays: veniceValidDays
   });
 
   return (
@@ -791,47 +865,6 @@ export function DashboardClient({
             >
               {t.topupNow}
             </button>
-            <button
-              className="secondary"
-              onClick={() => callAction("x402-pay", "/api/x402/resource/pay")}
-              disabled={busyAction === "x402-pay"}
-            >
-              {t.x402Pay}
-            </button>
-          </div>
-
-          <div className="x402-box">
-            <div className="event-line">
-              <strong>x402</strong>
-              <span className={`status ${latestX402Order?.status === "credited" ? "active" : activeX402Proof ? "blocked" : ""}`}>
-                {latestX402Order?.status ?? "未支付"}
-              </span>
-            </div>
-            <div className="event-meta">
-              <span>价格：0.01 USDC</span>
-              {activeX402Proof ? <span>proof: {shortHash(activeX402Proof)}</span> : null}
-            </div>
-            {x402Resource ? (
-              <div className="x402-resource">
-                <strong>{x402Resource.insight}</strong>
-                <span>
-                  {x402Resource.chain} · {formatDateTime(x402Resource.unlockedAt)}
-                </span>
-              </div>
-            ) : (
-              <span className="metric-label">
-                支付提交后用 proof 解锁资源；如果链上还在确认，可以稍后重试。
-              </span>
-            )}
-            <div className="actions compact-actions">
-              <button
-                className="secondary compact"
-                onClick={() => unlockX402Resource(activeX402Proof)}
-                disabled={!activeX402Proof || busyAction === "x402-unlock"}
-              >
-                {busyAction === "x402-unlock" ? "验证中..." : t.x402Unlock}
-              </button>
-            </div>
           </div>
 
           <label className="stack" style={{ marginTop: 14 }}>
@@ -1000,6 +1033,189 @@ export function DashboardClient({
             >
               {t.approveUsdc}
             </button>
+          </div>
+        </div>
+
+        <div className="panel span-12 venice-panel">
+          <div className="panel-title">
+            <h2>Venice AI</h2>
+            <span className={`status ${venicePactActive ? "active" : "blocked"}`}>
+              {venicePactActive ? "Venice Pact active" : "等待 Venice Pact"}
+            </span>
+          </div>
+          <div className="venice-grid">
+            <div className="venice-section">
+              <div className="event-line">
+                <strong>Balance</strong>
+                <button
+                  className="secondary compact"
+                  onClick={() => callGetAction("venice-balance", "/api/venice/balance")}
+                  disabled={busyAction === "venice-balance"}
+                >
+                  刷新
+                </button>
+              </div>
+              <pre className="json-preview">{formatJsonPreview(veniceBalance ?? "未读取")}</pre>
+              <div className="event-line">
+                <strong>x402 requirement</strong>
+                <button
+                  className="secondary compact"
+                  onClick={() => callGetAction("venice-discover", "/api/venice/x402-topup")}
+                  disabled={busyAction === "venice-discover"}
+                >
+                  发现
+                </button>
+              </div>
+              <div className="stack compact-stack">
+                <div className="row">
+                  <span>Network</span>
+                  <span className="value">{veniceAccept?.network ?? "-"}</span>
+                </div>
+                <div className="row">
+                  <span>Accepts</span>
+                  <span className="value">{veniceRequirements?.accepts.length ?? "-"}</span>
+                </div>
+                <div className="row">
+                  <span>USDC</span>
+                  <span className="value">{veniceAccept?.asset ?? "-"}</span>
+                </div>
+                <div className="row">
+                  <span>PayTo</span>
+                  <span className="value">{veniceAccept?.payTo ?? "-"}</span>
+                </div>
+              </div>
+            </div>
+
+            <div className="venice-section">
+              <div className="event-line">
+                <strong>Venice Pact</strong>
+                <span className={`status ${venicePactActive ? "active" : "blocked"}`}>
+                  {veniceAuthorization?.status ?? "missing"}
+                </span>
+              </div>
+              <div className="limits-grid">
+                <label>
+                  <span>Top-up USDC</span>
+                  <input
+                    inputMode="decimal"
+                    value={veniceTopupAmount}
+                    onChange={(event) => {
+                      setVeniceTopupAmount(event.target.value);
+                      setVenicePactPreview(undefined);
+                    }}
+                  />
+                </label>
+                <label>
+                  <span>Daily USDC</span>
+                  <input
+                    inputMode="decimal"
+                    value={veniceDailyLimitUsdc}
+                    onChange={(event) => {
+                      setVeniceDailyLimitUsdc(event.target.value);
+                      setVenicePactPreview(undefined);
+                    }}
+                  />
+                </label>
+                <label>
+                  <span>Monthly USDC</span>
+                  <input
+                    inputMode="decimal"
+                    value={veniceMonthlyLimitUsdc}
+                    onChange={(event) => {
+                      setVeniceMonthlyLimitUsdc(event.target.value);
+                      setVenicePactPreview(undefined);
+                    }}
+                  />
+                </label>
+                <label>
+                  <span>Valid days</span>
+                  <input
+                    inputMode="numeric"
+                    value={veniceValidDays}
+                    onChange={(event) => {
+                      setVeniceValidDays(event.target.value);
+                      setVenicePactPreview(undefined);
+                    }}
+                  />
+                </label>
+              </div>
+              <div className="actions compact-actions">
+                <button
+                  className="secondary"
+                  onClick={() =>
+                    callAction("venice-pact-preview", "/api/venice/pact", {
+                      ...venicePactBody,
+                      previewOnly: true
+                    })
+                  }
+                  disabled={busyAction === "venice-pact-preview"}
+                >
+                  生成 Venice Pact
+                </button>
+                <button
+                  onClick={() => callAction("venice-authorize", "/api/venice/pact", venicePactBody)}
+                  disabled={busyAction === "venice-authorize" || !venicePactPreview}
+                >
+                  提交 Venice Pact
+                </button>
+                <button
+                  className="secondary"
+                  onClick={() => callAction("venice-refresh-pact", "/api/venice/pact/refresh")}
+                  disabled={busyAction === "venice-refresh-pact" || !veniceAuthorization}
+                >
+                  刷新 Venice Pact
+                </button>
+              </div>
+              {venicePactPreview ? (
+                <div className="preview-compact">
+                  <strong>{venicePactPreview.intent}</strong>
+                  <pre>{venicePactPreview.executionPlan}</pre>
+                  <pre>{JSON.stringify(venicePactPreview.policies, null, 2)}</pre>
+                </div>
+              ) : null}
+            </div>
+
+            <div className="venice-section">
+              <div className="event-line">
+                <strong>Inference</strong>
+                <button
+                  className="secondary compact"
+                  onClick={() =>
+                    callAction("venice-inference", "/api/venice/inference", {
+                      prompt: venicePrompt
+                    })
+                  }
+                  disabled={busyAction === "venice-inference" || !venicePrompt.trim()}
+                >
+                  运行
+                </button>
+              </div>
+              <textarea
+                className="venice-textarea"
+                value={venicePrompt}
+                onChange={(event) => setVenicePrompt(event.target.value)}
+              />
+              {veniceInference ? <pre className="json-preview">{veniceInference}</pre> : null}
+              <label className="confirm-row">
+                <input
+                  type="checkbox"
+                  checked={venicePaymentConfirmed}
+                  onChange={(event) => setVenicePaymentConfirmed(event.target.checked)}
+                />
+                <span>确认通过 Base mainnet USDC 执行真实 Venice x402 top-up</span>
+              </label>
+              <button
+                onClick={() => submitVeniceTopup(venicePactBody)}
+                disabled={
+                  busyAction === "venice-topup" ||
+                  !venicePactActive ||
+                  !venicePaymentConfirmed ||
+                  Number(venicePactBody.amountUsdcMinor) <= 0
+                }
+              >
+                真实 top-up
+              </button>
+            </div>
           </div>
         </div>
 
@@ -1431,6 +1647,20 @@ function buildPactBody(input: {
   };
 }
 
+function buildVenicePactBody(input: {
+  amountUsdc: string;
+  dailyLimitUsdc: string;
+  monthlyLimitUsdc: string;
+  validDays: string;
+}) {
+  return {
+    amountUsdcMinor: parseUsdcInput(input.amountUsdc),
+    dailyLimitUsdcMinor: parseUsdcInput(input.dailyLimitUsdc),
+    monthlyLimitUsdcMinor: parseUsdcInput(input.monthlyLimitUsdc),
+    validDays: parsePositiveInteger(input.validDays)
+  };
+}
+
 function parseUsdcInput(value: string) {
   const parsed = Number(value);
   if (!Number.isFinite(parsed) || parsed <= 0) {
@@ -1445,6 +1675,37 @@ function parsePositiveInteger(value: string) {
     return 1;
   }
   return Math.floor(parsed);
+}
+
+function formatJsonPreview(value: unknown) {
+  if (typeof value === "string") {
+    return value;
+  }
+  try {
+    return JSON.stringify(value, null, 2);
+  } catch {
+    return String(value);
+  }
+}
+
+function extractVeniceText(value: unknown) {
+  if (typeof value === "string") {
+    return value;
+  }
+  if (isRecord(value)) {
+    const choices = value.choices;
+    if (Array.isArray(choices)) {
+      const first = choices[0];
+      if (isRecord(first) && isRecord(first.message) && typeof first.message.content === "string") {
+        return first.message.content;
+      }
+    }
+  }
+  return formatJsonPreview(value);
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
 }
 
 function formatMode(mode: CawStatusResult["runtime"]["mode"] | undefined) {
@@ -1625,6 +1886,38 @@ function statusMessage(action: string, result: ApiResult, lang: Lang) {
     return proof
       ? `${t.x402PayOk} ${result.status}. proof: ${proof}`
       : `${t.x402PayOk} ${result.status}.`;
+  }
+
+  if (action === "venice-balance") {
+    return "Venice balance 已刷新。";
+  }
+
+  if (action === "venice-discover") {
+    return result.selected
+      ? `Venice x402 requirement 已发现：${result.selected.network} / ${shortHash(result.selected.asset)}。`
+      : "Venice x402 requirement 已发现。";
+  }
+
+  if (action === "venice-pact-preview") {
+    return "Venice Pact 计划已生成。";
+  }
+
+  if (action === "venice-authorize") {
+    return "Venice Pact 已提交，请在 Cobo Agentic Wallet App 内审批。";
+  }
+
+  if (action === "venice-refresh-pact") {
+    return "Venice Pact 状态已刷新。";
+  }
+
+  if (action === "venice-topup") {
+    return result.responseStatus
+      ? `Venice x402 top-up 已提交，HTTP ${result.responseStatus}。`
+      : "Venice x402 top-up 已提交。";
+  }
+
+  if (action === "venice-inference") {
+    return "Venice inference 已完成。";
   }
 
   if (action === "connect") {

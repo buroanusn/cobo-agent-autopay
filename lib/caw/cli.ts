@@ -139,15 +139,17 @@ export async function getCawCliPairingStatus(userId: string) {
 
 export async function submitCawCliPact(input: {
   userId: string;
+  name?: string;
   intent: string;
   originalIntent: string;
   executionPlan: string;
   policies: unknown[];
   completionConditions: unknown[];
 }) {
-  const raw = await runCawCliJson<Record<string, unknown>>(input.userId, [
+  const args = [
     "pact",
     "submit",
+    ...(input.name ? ["--name", input.name] : []),
     "--intent",
     input.intent,
     "--original-intent",
@@ -158,7 +160,8 @@ export async function submitCawCliPact(input: {
     JSON.stringify(input.completionConditions),
     "--execution-plan",
     input.executionPlan
-  ]);
+  ];
+  const raw = await runCawCliJson<Record<string, unknown>>(input.userId, args);
   return normalizePactResult(raw);
 }
 

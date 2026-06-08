@@ -11,6 +11,7 @@ export const dynamic = "force-dynamic";
 type TopupBody = {
   amountUsdc?: number;
   amountUsdcMinor?: number;
+  confirmed?: boolean;
 };
 
 export async function GET() {
@@ -31,6 +32,9 @@ export async function POST(request: Request) {
   try {
     const user = await requireCurrentUser();
     const body = await readJson<TopupBody>(request);
+    if (body.confirmed !== true) {
+      throw new Error("Explicit confirmation is required before executing a real Venice x402 top-up.");
+    }
     const amountUsdcMinor = parseAmountUsdcMinor(body);
     return okJson(await runVeniceX402Topup({ userId: user.id, amountUsdcMinor }));
   } catch (error) {

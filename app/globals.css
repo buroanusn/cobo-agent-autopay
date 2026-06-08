@@ -442,6 +442,94 @@ a.button-link.compact {
   font-size: 13px;
 }
 
+.venice-panel {
+  border-color: rgba(29, 138, 95, 0.22);
+}
+
+.venice-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 14px;
+  align-items: start;
+}
+
+.venice-section {
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+}
+
+.venice-section label {
+  display: grid;
+  gap: 6px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.venice-section input,
+.venice-textarea {
+  width: 100%;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  padding: 10px 12px;
+  color: var(--text);
+  background: white;
+}
+
+.venice-textarea {
+  min-height: 92px;
+  resize: vertical;
+  line-height: 1.45;
+}
+
+.compact-stack {
+  gap: 8px;
+}
+
+.json-preview,
+.preview-compact pre {
+  max-height: 220px;
+  margin: 0;
+  overflow: auto;
+  border: 1px solid rgba(205, 228, 215, 0.9);
+  border-radius: 12px;
+  padding: 10px;
+  background: #fbfffd;
+  color: #28463a;
+  font-size: 12px;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.preview-compact {
+  display: grid;
+  gap: 8px;
+  border-top: 1px solid var(--line);
+  padding-top: 12px;
+}
+
+.preview-compact strong {
+  line-height: 1.4;
+}
+
+.confirm-row {
+  display: grid !important;
+  grid-template-columns: auto 1fr;
+  align-items: start;
+  gap: 8px !important;
+  border: 1px solid rgba(154, 106, 19, 0.24);
+  border-radius: 14px;
+  padding: 10px 12px;
+  background: #fffaf0;
+  color: #6f4d12 !important;
+}
+
+.confirm-row input {
+  width: auto;
+  margin-top: 2px;
+}
+
 .pact-form {
   display: grid;
   gap: 10px;
@@ -730,7 +818,8 @@ a.button-link.compact {
   }
 
   .preview-grid,
-  .limits-grid {
+  .limits-grid,
+  .venice-grid {
     grid-template-columns: 1fr;
   }
 

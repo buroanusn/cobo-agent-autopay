@@ -4,6 +4,8 @@ export type CawAuthorizationStatus =
   | "expired"
   | "revoked";
 
+export type CawAuthorizationPurpose = "credits_payment" | "venice_x402";
+
 export type TopupOrderStatus =
   | "pending_policy"
   | "caw_submitted"
@@ -34,6 +36,7 @@ export type CreditAccount = {
 export type CawAuthorization = {
   id: string;
   userId: string;
+  purpose: CawAuthorizationPurpose;
   walletAddress: string;
   pactId: string;
   pactApiKey?: string;
@@ -166,6 +169,7 @@ export type DashboardSnapshot = {
   user: User;
   account: CreditAccount;
   authorization?: CawAuthorization;
+  veniceAuthorization?: CawAuthorization;
   pairingSession?: CawPairingSession;
   cawOnboardingSession?: CawWalletOnboardingSession;
   guardrails: UserGuardrails;

@@ -12,6 +12,7 @@ import {
 import type {
   AgentUsageEvent,
   CawAuthorization,
+  CawAuthorizationPurpose,
   CreditAccount,
   DashboardSnapshot,
   LedgerEntry,
@@ -39,7 +40,11 @@ export const prismaRepository: CreditRepository = {
     const user = await requirePrismaUser(userId);
     const account = await requirePrismaCreditAccount(userId);
     const authorization = await prisma.cawAuthorization.findFirst({
-      where: { userId },
+      where: { userId, purpose: "credits_payment" },
+      orderBy: { createdAt: "desc" }
+    });
+    const veniceAuthorization = await prisma.cawAuthorization.findFirst({
+      where: { userId, purpose: "venice_x402" },
       orderBy: { createdAt: "desc" }
     });
     const [pairingSession, cawOnboardingSession, topupOrders, ledgerEntries, usageEvents] = await Promise.all([
@@ -72,11 +77,15 @@ export const prismaRepository: CreditRepository = {
     const mappedAuthorization = authorization
       ? mapAuthorization(authorization, { includePactApiKey: false })
       : undefined;
+    const mappedVeniceAuthorization = veniceAuthorization
+      ? mapAuthorization(veniceAuthorization, { includePactApiKey: false })
+      : undefined;
 
     return {
       user: mapUser(user),
       account: mapCreditAccount(account),
       authorization: mappedAuthorization,
+      veniceAuthorization: mappedVeniceAuthorization,
       pairingSession: pairingSession ? mapPairingSession(pairingSession) : undefined,
       cawOnboardingSession: cawOnboardingSession
         ? mapCawOnboardingSession(cawOnboardingSession)
@@ -207,10 +216,13 @@ export const prismaRepository: CreditRepository = {
     });
     return mapUser(updated);
   },
-  async getActiveAuthorization(userId: string): Promise<CawAuthorization | undefined> {
+  async getActiveAuthorization(
+    userId: string,
+    purpose: CawAuthorizationPurpose = "credits_payment"
+  ): Promise<CawAuthorization | undefined> {
     await ensureDemoData(userId);
     const authorization = await prisma.cawAuthorization.findFirst({
-      where: { userId },
+      where: { userId, purpose },
       orderBy: { createdAt: "desc" }
     });
     return authorization ? mapAuthorization(authorization) : undefined;
@@ -220,6 +232,7 @@ export const prismaRepository: CreditRepository = {
       data: {
         id: authorization.id,
         userId: authorization.userId,
+        purpose: authorization.purpose,
         walletAddress: authorization.walletAddress,
         pactId: authorization.pactId,
         pactApiKey: authorization.pactApiKey,
@@ -242,6 +255,7 @@ export const prismaRepository: CreditRepository = {
       where: { id: authorization.id },
       data: {
         walletAddress: authorization.walletAddress,
+        purpose: authorization.purpose,
         pactId: authorization.pactId,
         pactApiKey: authorization.pactApiKey,
         status: authorization.status,
@@ -671,6 +685,7 @@ function mapAuthorization(
   authorization: {
     id: string;
     userId: string;
+    purpose: CawAuthorization["purpose"];
     walletAddress: string;
     pactId: string;
     pactApiKey: string | null;
@@ -690,6 +705,7 @@ function mapAuthorization(
   return {
     id: authorization.id,
     userId: authorization.userId,
+    purpose: authorization.purpose,
     walletAddress: authorization.walletAddress,
     pactId: authorization.pactId,
     pactApiKey: options.includePactApiKey ? authorization.pactApiKey ?? undefined : undefined,
