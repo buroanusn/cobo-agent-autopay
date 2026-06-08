@@ -2,6 +2,29 @@
 
 Last updated: 2026-06-09, Asia/Shanghai.
 
+## 2026-06-09 Update: Ordered Feature Development Plan
+
+Added a dedicated sequencing document:
+
+- `docs/ordered-feature-development.md`
+
+Purpose:
+
+- Keep the next phase strictly one feature at a time.
+- Put new-user onboarding before Venice automation because current testing is
+  blocked by user confusion around Cobo ID / CAW wallet creation.
+- Make every feature independently testable, validated, committed, and pushed
+  before starting the next one.
+- Preserve the real-money boundary: no real Pact submission, CAW transaction,
+  x402 top-up, or on-chain operation during development/testing without
+  explicit user confirmation.
+
+Recommended next feature:
+
+```text
+1. 新用户首次使用流程校准
+```
+
 ## 2026-06-09 Update: Simplified Dashboard First Screen
 
 Simplified the dashboard for first-time users:
