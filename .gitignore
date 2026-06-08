@@ -12,3 +12,4 @@ pnpm-debug.log*
 .DS_Store
 *.tsbuildinfo
 .idea/
+.caw-cli-homes/

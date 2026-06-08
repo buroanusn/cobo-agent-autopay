@@ -294,6 +294,35 @@ a.button-link.compact {
   background: #fff;
 }
 
+.onboarding-card {
+  display: grid;
+  gap: 12px;
+  margin-bottom: 18px;
+  border: 1px solid rgba(205, 228, 215, 0.9);
+  border-radius: 16px;
+  padding: 14px;
+  background: #fbfffd;
+}
+
+.onboarding-prompts {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.onboarding-prompts input {
+  width: 100%;
+  min-height: 42px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  padding: 0 12px;
+  background: #fff;
+}
+
+.error-text {
+  color: #9a3412;
+}
+
 .pairing-code {
   margin-top: 8px;
   border: 1px dashed rgba(29, 138, 95, 0.34);
@@ -691,7 +720,8 @@ a.button-link.compact {
   }
 
   .pairing-box,
-  .wallet-profile-form {
+  .wallet-profile-form,
+  .onboarding-prompts {
     grid-template-columns: 1fr;
   }
 

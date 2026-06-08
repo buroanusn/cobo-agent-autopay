@@ -17,7 +17,9 @@ import type {
   LedgerEntry,
   TopupOrder,
   User,
-  CawPairingSession
+  CawPairingSession,
+  CawWalletOnboardingSession,
+  CawOnboardingPrompt
 } from "@/lib/domain/types";
 import { prisma } from "@/lib/store/prisma-client";
 import type { ChainEventRecord, CreditRepository } from "@/lib/store/repository";
@@ -40,8 +42,9 @@ export const prismaRepository: CreditRepository = {
       where: { userId },
       orderBy: { createdAt: "desc" }
     });
-    const [pairingSession, topupOrders, ledgerEntries, usageEvents] = await Promise.all([
+    const [pairingSession, cawOnboardingSession, topupOrders, ledgerEntries, usageEvents] = await Promise.all([
       prisma.cawPairingSession.findUnique({ where: { userId } }),
+      prisma.cawWalletOnboardingSession.findUnique({ where: { userId } }),
       prisma.topupOrder.findMany({
         where: { userId },
         orderBy: { createdAt: "desc" },
@@ -75,6 +78,9 @@ export const prismaRepository: CreditRepository = {
       account: mapCreditAccount(account),
       authorization: mappedAuthorization,
       pairingSession: pairingSession ? mapPairingSession(pairingSession) : undefined,
+      cawOnboardingSession: cawOnboardingSession
+        ? mapCawOnboardingSession(cawOnboardingSession)
+        : undefined,
       guardrails: {
         singleLimitUsdcMinor:
           mappedAuthorization?.singleLimitUsdcMinor ?? DEFAULT_SPEND_POLICY.singleLimitUsdcMinor,
@@ -272,6 +278,55 @@ export const prismaRepository: CreditRepository = {
       }
     });
     return mapPairingSession(created);
+  },
+  async getCawOnboardingSession(
+    userId: string
+  ): Promise<CawWalletOnboardingSession | undefined> {
+    await ensureDemoData(userId);
+    const session = await prisma.cawWalletOnboardingSession.findUnique({ where: { userId } });
+    return session ? mapCawOnboardingSession(session) : undefined;
+  },
+  async upsertCawOnboardingSession(
+    session: CawWalletOnboardingSession
+  ): Promise<CawWalletOnboardingSession> {
+    const updated = await prisma.cawWalletOnboardingSession.upsert({
+      where: { userId: session.userId },
+      create: {
+        userId: session.userId,
+        sessionId: session.sessionId,
+        status: session.status,
+        phase: session.phase,
+        walletStatus: session.walletStatus,
+        needsInput: session.needsInput,
+        prompts: session.prompts,
+        nextAction: session.nextAction,
+        lastError: session.lastError,
+        agentName: session.agentName,
+        apiUrl: session.apiUrl,
+        walletId: session.walletId,
+        walletName: session.walletName,
+        agentId: session.agentId,
+        createdAt: new Date(session.createdAt),
+        updatedAt: new Date(session.updatedAt)
+      },
+      update: {
+        sessionId: session.sessionId,
+        status: session.status,
+        phase: session.phase,
+        walletStatus: session.walletStatus,
+        needsInput: session.needsInput,
+        prompts: session.prompts,
+        nextAction: session.nextAction,
+        lastError: session.lastError,
+        agentName: session.agentName,
+        apiUrl: session.apiUrl,
+        walletId: session.walletId,
+        walletName: session.walletName,
+        agentId: session.agentId,
+        updatedAt: new Date(session.updatedAt)
+      }
+    });
+    return mapCawOnboardingSession(updated);
   },
   async createUsageEvent(
     input: Omit<AgentUsageEvent, "id" | "createdAt">
@@ -531,6 +586,71 @@ function mapPairingSession(session: {
   };
 }
 
+function mapCawOnboardingSession(session: {
+  userId: string;
+  sessionId: string | null;
+  status: CawWalletOnboardingSession["status"];
+  phase: string | null;
+  walletStatus: string | null;
+  needsInput: boolean;
+  prompts: unknown;
+  nextAction: string | null;
+  lastError: string | null;
+  agentName: string | null;
+  apiUrl: string | null;
+  walletId: string | null;
+  walletName: string | null;
+  agentId: string | null;
+  createdAt: Date;
+  updatedAt: Date;
+}): CawWalletOnboardingSession {
+  return {
+    userId: session.userId,
+    sessionId: session.sessionId ?? undefined,
+    status: session.status,
+    phase: session.phase ?? undefined,
+    walletStatus: session.walletStatus ?? undefined,
+    needsInput: session.needsInput,
+    prompts: normalizePromptList(session.prompts),
+    nextAction: session.nextAction ?? undefined,
+    lastError: session.lastError ?? undefined,
+    agentName: session.agentName ?? undefined,
+    apiUrl: session.apiUrl ?? undefined,
+    walletId: session.walletId ?? undefined,
+    walletName: session.walletName ?? undefined,
+    agentId: session.agentId ?? undefined,
+    createdAt: session.createdAt.toISOString(),
+    updatedAt: session.updatedAt.toISOString()
+  };
+}
+
+function normalizePromptList(value: unknown): CawOnboardingPrompt[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  return value
+    .map((entry): CawOnboardingPrompt | undefined => {
+      if (typeof entry !== "object" || entry === null) {
+        return undefined;
+      }
+      const record = entry as Record<string, unknown>;
+      const id = stringField(record, "id", "");
+      if (!id) {
+        return undefined;
+      }
+      return {
+        id,
+        label: stringField(record, "label", undefined),
+        message: stringField(record, "message", undefined),
+        type: stringField(record, "type", undefined),
+        required: booleanField(record, "required"),
+        secret: booleanField(record, "secret"),
+        options: arrayStringField(record, "options")
+      };
+    })
+    .filter((entry): entry is CawOnboardingPrompt => Boolean(entry));
+}
+
 function mapCreditAccount(account: {
   userId: string;
   balanceCredits: number;
@@ -666,6 +786,29 @@ function mapUsageEvent(event: {
     status: event.status,
     createdAt: event.createdAt.toISOString()
   };
+}
+
+function stringField<T extends string | undefined>(
+  source: Record<string, unknown>,
+  key: string,
+  fallback: T
+): string | T {
+  const value = source[key];
+  return typeof value === "string" && value.length > 0 ? value : fallback;
+}
+
+function booleanField(source: Record<string, unknown>, key: string) {
+  const value = source[key];
+  return typeof value === "boolean" ? value : undefined;
+}
+
+function arrayStringField(source: Record<string, unknown>, key: string) {
+  const value = source[key];
+  if (!Array.isArray(value)) {
+    return undefined;
+  }
+  const strings = value.filter((entry): entry is string => typeof entry === "string");
+  return strings.length ? strings : undefined;
 }
 
 function isUniqueConstraintError(error: unknown) {

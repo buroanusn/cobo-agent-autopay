@@ -13,6 +13,7 @@ import type {
   CawAuthorization,
   CreditAccount,
   CawPairingSession,
+  CawWalletOnboardingSession,
   DashboardSnapshot,
   LedgerEntry,
   TopupOrder,
@@ -28,6 +29,7 @@ type AgentDb = {
   usageEvents: AgentUsageEvent[];
   chainEventsSeen: Set<string>;
   pairingSessions: Map<string, CawPairingSession>;
+  cawOnboardingSessions: Map<string, CawWalletOnboardingSession>;
 };
 
 const globalStore = globalThis as typeof globalThis & {
@@ -75,7 +77,8 @@ function createInitialDb(): AgentDb {
     topupOrders: new Map(),
     usageEvents: [],
     chainEventsSeen: new Set(),
-    pairingSessions: new Map()
+    pairingSessions: new Map(),
+    cawOnboardingSessions: new Map()
   };
 }
 
@@ -161,6 +164,7 @@ export function snapshotForUser(userId: string): DashboardSnapshot {
     account,
     authorization: publicAuthorization,
     pairingSession: db.pairingSessions.get(userId),
+    cawOnboardingSession: db.cawOnboardingSessions.get(userId),
     guardrails: {
       singleLimitUsdcMinor:
         authorization?.singleLimitUsdcMinor ?? DEFAULT_SPEND_POLICY.singleLimitUsdcMinor,

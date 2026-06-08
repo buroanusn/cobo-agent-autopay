@@ -1,6 +1,96 @@
 # Handoff For Next Development
 
-Last updated: 2026-06-05, Asia/Shanghai.
+Last updated: 2026-06-08, Asia/Shanghai.
+
+## 2026-06-08 Update: Real Mainnet Direction
+
+Product direction changed from Base Sepolia-first verification to real
+environment execution first:
+
+- Keep the existing CAW SDK + CreditsPayment flow for the current product path.
+- Add CAW CLI support instead of replacing the SDK wholesale.
+- The app now has a CAW CLI onboarding foundation so the site can create and
+bind a CAW wallet for each logged-in user.
+- Each app user gets an isolated CAW CLI `HOME` under `CAW_CLI_HOME_ROOT`
+  instead of sharing the server user's active CAW profile.
+- `.caw-cli-homes/` is ignored by git because it may contain local CAW
+  profile credentials.
+- Venice AI integration is started as backend APIs:
+  - `GET /api/venice/balance` reads Venice billing balance with
+    `VENICE_API_KEY`.
+  - `POST /api/venice/inference` calls Venice chat completions with
+    `VENICE_API_KEY`.
+  - `GET /api/venice/x402-topup` discovers Venice x402 payment requirements
+    without spending.
+  - `POST /api/venice/x402-topup` executes a real CAW CLI
+    `caw fetch --protocol x402` top-up. It is gated to Base mainnet USDC.
+
+New CAW wallet creation flow:
+
+1. Logged-in user clicks "创建 CAW 钱包" in the dashboard.
+2. Backend calls `caw onboard` inside that user's isolated CAW CLI HOME.
+3. The app stores `session_id`, `phase`, `prompts`, `needs_input`,
+   `wallet_status`, and error/next-action metadata in
+   `caw_wallet_onboarding_sessions`.
+4. Follow-up calls always reuse the stored `session_id`.
+5. When the CLI reports the wallet is active, the app reads the user's CAW CLI
+   profile and binds `wallet_uuid` + EVM address to the app user.
+6. Pairing code generation uses the user's isolated CLI profile when the wallet
+   was created through CLI onboarding.
+
+Important real-money guardrails:
+
+- `POST /api/venice/x402-topup` is the first Venice endpoint that can spend
+  real USDC. Do not call it during smoke tests.
+- The endpoint requires:
+  - `CHAIN_ENV=base-mainnet`
+  - bound user CAW wallet
+  - active non-mock Pact
+  - unexpired Pact with enough single/monthly spend
+  - Venice offering Base mainnet USDC in its 402 `accepts`
+- The `--max-amount` passed to `caw fetch` is exactly the requested amount in
+  USDC minor units; if Venice asks for more, CAW CLI should refuse the payment.
+
+Validation completed for this update:
+
+```text
+npm run db:generate
+npm run typecheck
+npm run lint
+npm run contract:compile
+npm run build
+git diff --check
+```
+
+Local HTTP smoke completed:
+
+```text
+GET /dashboard unauthenticated -> 307 /login
+GET /api/wallet/caw/onboarding unauthenticated -> 401
+POST /api/auth/login -> 200
+GET /dashboard authenticated -> 200
+GET /api/wallet/caw/onboarding authenticated -> 200
+GET /api/wallet/caw/status authenticated -> 200
+```
+
+Local Prisma migration applied:
+
+```text
+20260608093000_add_caw_cli_onboarding
+```
+
+Remaining implementation work:
+
+- Add a dedicated Venice Pact template/preview so the CAW App approval clearly
+  authorizes Venice x402 top-ups on Base mainnet USDC.
+- Add frontend controls for Venice balance, top-up amount, and inference once
+  the real Pact wording is finalized.
+- Decide whether internal CreditsPayment approvals/execution should also move
+  to CAW CLI for CLI-created wallets, or remain SDK-only.
+- Add production-grade background jobs for payment/order polling instead of
+  relying only on manual refresh.
+- Add encrypted storage or managed secret handling before deploying isolated
+  CAW CLI homes to a shared production server.
 
 ## Current Status
 

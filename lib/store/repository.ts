@@ -6,7 +6,8 @@ import type {
   LedgerEntry,
   TopupOrder,
   User,
-  CawPairingSession
+  CawPairingSession,
+  CawWalletOnboardingSession
 } from "@/lib/domain/types";
 
 export type ChainEventRecord = {
@@ -31,6 +32,10 @@ export type CreditRepository = {
   createAuthorization(authorization: CawAuthorization): Promise<CawAuthorization>;
   updateAuthorization(authorization: CawAuthorization): Promise<CawAuthorization>;
   createPairingSession(userId: string, session: CawPairingSession): Promise<CawPairingSession>;
+  getCawOnboardingSession(userId: string): Promise<CawWalletOnboardingSession | undefined>;
+  upsertCawOnboardingSession(
+    session: CawWalletOnboardingSession
+  ): Promise<CawWalletOnboardingSession>;
   createUsageEvent(input: Omit<AgentUsageEvent, "id" | "createdAt">): Promise<AgentUsageEvent>;
   appendLedgerEntry(input: Omit<LedgerEntry, "id" | "createdAt">): Promise<LedgerEntry>;
   findPendingTopupOrder(userId: string): Promise<TopupOrder | undefined>;

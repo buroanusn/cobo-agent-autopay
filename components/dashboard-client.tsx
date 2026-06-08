@@ -47,6 +47,13 @@ type ApiResult = {
     paymentHeader: string;
     resourcePath: string;
   };
+  onboarding?: DashboardSnapshot["cawOnboardingSession"];
+  connection?: {
+    walletId?: string;
+    walletAddress?: string;
+    walletName?: string;
+    agentId?: string;
+  };
 };
 
 type X402Resource = {
@@ -98,6 +105,7 @@ type CawStatusResult = {
     authorizationStatus: string;
     pactId?: string;
     activeAuthorization: boolean;
+    cawOnboardingStatus?: string;
   };
   spendReadiness?: {
     requiredUsdcMinor: number;
@@ -361,13 +369,17 @@ export function DashboardClient({
     "Analyze the user's portfolio and continue the agent task."
   );
   const [pactIntent, setPactIntent] = useState(
-    "允许这个 Agent 在我的站内 credits 余额不足时，使用 Base Sepolia USDC 自动充值；每次最多 1 USDC，每天最多 5 USDC，有效期 7 天。"
+    `允许这个 Agent 在我的站内 credits 余额不足时，使用 ${initialSnapshot.network.name} USDC 自动充值；每次最多 1 USDC，每天最多 5 USDC，有效期 7 天。`
   );
   const [singleLimitUsdc, setSingleLimitUsdc] = useState("1");
   const [dailyLimitUsdc, setDailyLimitUsdc] = useState("5");
   const [monthlyLimitUsdc, setMonthlyLimitUsdc] = useState("20");
   const [validDays, setValidDays] = useState("7");
   const [cawWalletId, setCawWalletId] = useState(initialSnapshot.user.cawWalletId ?? "");
+  const [cawAgentName, setCawAgentName] = useState(
+    `${initialSnapshot.user.email.split("@")[0]?.replace(/[^a-zA-Z0-9_-]/g, "-") || "user"}-agent`
+  );
+  const [cawOnboardingAnswers, setCawOnboardingAnswers] = useState<Record<string, string>>({});
   const [x402Proof, setX402Proof] = useState("");
   const [x402Resource, setX402Resource] = useState<X402Resource | undefined>(undefined);
 
@@ -420,6 +432,9 @@ export function DashboardClient({
 
       if (result.snapshot) {
         setSnapshot(result.snapshot);
+        if (result.snapshot.user.cawWalletId) {
+          setCawWalletId(result.snapshot.user.cawWalletId);
+        }
       }
 
       if (action === "pact-preview" && result.preview) {
@@ -428,6 +443,10 @@ export function DashboardClient({
 
       if (action === "authorize") {
         setPactPreview(undefined);
+      }
+
+      if (action === "caw-onboard" && result.onboarding?.needsInput === false) {
+        setCawOnboardingAnswers({});
       }
 
       if (action === "x402-pay") {
@@ -498,11 +517,14 @@ export function DashboardClient({
   }
 
   const authorization = snapshot.authorization;
+  const onboarding = snapshot.cawOnboardingSession;
   const t = copy[lang];
   const account = snapshot.account;
   const guardrails = snapshot.guardrails;
   const stats = snapshot.paymentStats;
   const walletProfileBound = Boolean(snapshot.user.cawWalletId && snapshot.user.cawWalletAddress);
+  const onboardingActive = onboarding?.status === "wallet_active";
+  const onboardingPrompts = onboarding?.prompts ?? [];
   const selectedCawWalletId = cawWalletId.trim() || cawStatus?.runtime.walletId || snapshot.user.cawWalletId || "";
   const walletPaired = Boolean(cawStatus?.runtime.walletPaired);
   const missingItems = cawStatus?.missing.map(formatMissingItem) ?? [];
@@ -596,6 +618,68 @@ export function DashboardClient({
               {walletPaired ? "已完成" : snapshot.pairingSession ? snapshot.pairingSession.status : "未生成"}
             </span>
           </div>
+          <div className="onboarding-card">
+            <div className="event-line">
+              <strong>创建用户 CAW 钱包</strong>
+              <span className={`status ${onboardingActive ? "active" : onboarding ? "blocked" : ""}`}>
+                {onboarding?.status ?? "未创建"}
+              </span>
+            </div>
+            <div className="wallet-profile-form">
+              <label>
+                <span className="metric-label">Agent 名称</span>
+                <input
+                  value={cawAgentName}
+                  onChange={(event) => setCawAgentName(event.target.value)}
+                  disabled={walletProfileBound || busyAction === "caw-onboard"}
+                />
+              </label>
+              <div className="pairing-help">
+                <p>我们会为当前登录用户创建独立 CAW CLI profile，并保存创建状态。</p>
+                <p>创建完成后自动绑定 Wallet UUID；之后再生成配对码让用户在 CAW App 接管。</p>
+              </div>
+            </div>
+            {onboardingPrompts.length > 0 ? (
+              <div className="onboarding-prompts">
+                {onboardingPrompts.map((promptItem) => (
+                  <label key={promptItem.id}>
+                    <span className="metric-label">
+                      {promptItem.label || promptItem.message || promptItem.id}
+                    </span>
+                    <input
+                      type={promptItem.secret ? "password" : "text"}
+                      value={cawOnboardingAnswers[promptItem.id] ?? ""}
+                      onChange={(event) =>
+                        setCawOnboardingAnswers((current) => ({
+                          ...current,
+                          [promptItem.id]: event.target.value
+                        }))
+                      }
+                    />
+                  </label>
+                ))}
+              </div>
+            ) : null}
+            {onboarding?.lastError ? (
+              <p className="metric-label error-text">创建提示：{onboarding.lastError}</p>
+            ) : null}
+            {onboarding?.nextAction ? (
+              <p className="metric-label">下一步：{onboarding.nextAction}</p>
+            ) : null}
+            <div className="actions">
+              <button
+                onClick={() =>
+                  callAction("caw-onboard", "/api/wallet/caw/onboarding", {
+                    agentName: cawAgentName,
+                    answers: onboardingPrompts.length > 0 ? cawOnboardingAnswers : undefined
+                  })
+                }
+                disabled={busyAction === "caw-onboard" || walletProfileBound}
+              >
+                {onboardingPrompts.length > 0 ? "提交创建信息" : onboarding ? "继续创建钱包" : "创建 CAW 钱包"}
+              </button>
+            </div>
+          </div>
           <div className="wallet-profile-form">
             <label>
               <span className="metric-label">CAW Wallet UUID</span>
@@ -644,6 +728,13 @@ export function DashboardClient({
               disabled={busyAction === "pair" || walletPaired || !walletProfileBound}
             >
               {walletPaired ? "已配对，无需生成" : "生成配对码"}
+            </button>
+            <button
+              className="secondary"
+              onClick={() => callAction("refresh-pair", "/api/wallet/caw/pairing-code/refresh")}
+              disabled={busyAction === "refresh-pair" || walletPaired || !snapshot.pairingSession}
+            >
+              刷新配对状态
             </button>
             <button
               className="secondary"
@@ -1379,6 +1470,7 @@ function formatEth(value: string) {
 function formatMissingItem(item: string) {
   const translations: Record<string, string> = {
     "CAW API URL/API key": "CAW 接口配置",
+    "CAW CLI profile": "CAW CLI 用户钱包",
     "CAW wallet id": "CAW 钱包 ID",
     "CAW App pairing": "手机 App 配对",
     "payment contract address": "支付合约地址",
@@ -1392,6 +1484,7 @@ function formatMissingItem(item: string) {
     "USDC allowance below next payment": "USDC 授权不足",
     "USDC balance below next payment": "USDC 余额不足",
     "Base Sepolia ETH gas balance missing": "Base Sepolia ETH gas 不足",
+    "Base ETH gas balance missing": "Base ETH gas 不足",
     "on-chain readiness check unavailable": "链上就绪检查失败"
   };
 
@@ -1403,7 +1496,7 @@ function getNextStep(missingItems: string[]) {
     return "先在手机 CAW App 完成钱包配对。";
   }
   if (missingItems.includes("真实 CAW Pact 授权")) {
-    return "先给 CAW 钱包领取 Base Sepolia ETH 和 USDC，然后创建真实 Pact 并在手机 App 里批准。";
+    return "先给 CAW 钱包准备当前网络的 ETH gas 和 USDC，然后创建真实 Pact 并在手机 App 里批准。";
   }
   if (missingItems.includes("Pact 剩余额度不足")) {
     return "当前 Pact 额度已不足，创建新的最小额度 Pact 后再继续真实支付测试。";
@@ -1411,8 +1504,12 @@ function getNextStep(missingItems: string[]) {
   if (missingItems.includes("USDC 授权不足")) {
     return "先给支付合约执行最小 USDC approve，再继续真实支付。";
   }
-  if (missingItems.includes("USDC 余额不足") || missingItems.includes("Base Sepolia ETH gas 不足")) {
-    return "先补足 CAW 钱包的 Base Sepolia USDC 和 ETH gas。";
+  if (
+    missingItems.includes("USDC 余额不足") ||
+    missingItems.includes("Base Sepolia ETH gas 不足") ||
+    missingItems.includes("Base ETH gas 不足")
+  ) {
+    return "先补足 CAW 钱包在当前网络上的 USDC 和 ETH gas。";
   }
   if (missingItems.length > 0) {
     return `还缺：${missingItems.join("，")}。`;
@@ -1559,6 +1656,26 @@ function statusMessage(action: string, result: ApiResult, lang: Lang) {
 
   if (action === "pair") {
     return t.pairOk;
+  }
+
+  if (action === "refresh-pair") {
+    return result.snapshot?.pairingSession?.status === "paired"
+      ? "配对已完成。"
+      : "配对状态已刷新。";
+  }
+
+  if (action === "caw-onboard") {
+    const status = result.onboarding?.status ?? result.snapshot?.cawOnboardingSession?.status;
+    if (status === "wallet_active") {
+      return "CAW 钱包已创建并绑定到当前账号。";
+    }
+    if (status === "waiting_input") {
+      return "请填写创建钱包所需信息后继续。";
+    }
+    if (status === "failed") {
+      return "CAW 钱包创建失败，请查看提示并重试。";
+    }
+    return "CAW 钱包创建流程已继续。";
   }
 
   if (action === "guardrails") {

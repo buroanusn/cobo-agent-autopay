@@ -8,7 +8,8 @@ import type {
   LedgerEntry,
   TopupOrder,
   User,
-  CawPairingSession
+  CawPairingSession,
+  CawWalletOnboardingSession
 } from "@/lib/domain/types";
 import {
   createId,
@@ -79,6 +80,17 @@ export const memoryRepository: CreditRepository = {
     session: CawPairingSession
   ): Promise<CawPairingSession> {
     db.pairingSessions.set(userId, session);
+    return session;
+  },
+  async getCawOnboardingSession(
+    userId: string
+  ): Promise<CawWalletOnboardingSession | undefined> {
+    return db.cawOnboardingSessions.get(userId);
+  },
+  async upsertCawOnboardingSession(
+    session: CawWalletOnboardingSession
+  ): Promise<CawWalletOnboardingSession> {
+    db.cawOnboardingSessions.set(session.userId, session);
     return session;
   },
   async createUsageEvent(

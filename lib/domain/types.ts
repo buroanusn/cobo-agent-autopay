@@ -97,6 +97,42 @@ export type CawPairingSession = {
   createdAt: string;
 };
 
+export type CawOnboardingStatus =
+  | "not_started"
+  | "waiting_input"
+  | "running"
+  | "wallet_active"
+  | "failed";
+
+export type CawOnboardingPrompt = {
+  id: string;
+  label?: string;
+  message?: string;
+  type?: string;
+  required?: boolean;
+  secret?: boolean;
+  options?: string[];
+};
+
+export type CawWalletOnboardingSession = {
+  userId: string;
+  sessionId?: string;
+  status: CawOnboardingStatus;
+  phase?: string;
+  walletStatus?: string;
+  needsInput: boolean;
+  prompts: CawOnboardingPrompt[];
+  nextAction?: string;
+  lastError?: string;
+  agentName?: string;
+  apiUrl?: string;
+  walletId?: string;
+  walletName?: string;
+  agentId?: string;
+  createdAt: string;
+  updatedAt: string;
+};
+
 export type UserGuardrails = {
   singleLimitUsdcMinor: number;
   dailyLimitUsdcMinor: number;
@@ -131,6 +167,7 @@ export type DashboardSnapshot = {
   account: CreditAccount;
   authorization?: CawAuthorization;
   pairingSession?: CawPairingSession;
+  cawOnboardingSession?: CawWalletOnboardingSession;
   guardrails: UserGuardrails;
   paymentStats: PaymentStats;
   pendingApprovals: TopupOrder[];
