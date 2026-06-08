@@ -364,6 +364,29 @@ a.button-link.compact {
   line-height: 1.45;
 }
 
+.inline-details {
+  margin: 2px 0 18px;
+  border-top: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
+  padding: 10px 0;
+}
+
+.inline-details summary {
+  cursor: pointer;
+  color: var(--primary-strong);
+  font-size: 13px;
+  font-weight: 750;
+}
+
+.inline-details .actions {
+  margin-top: 10px;
+}
+
+.compact-profile-form {
+  margin-top: 12px;
+  margin-bottom: 0;
+}
+
 .span-8 {
   grid-column: span 8;
 }
@@ -567,6 +590,103 @@ a.button-link.compact {
 
 .demo-hidden {
   display: none !important;
+}
+
+.activity-panel {
+  align-self: start;
+}
+
+.activity-list {
+  display: grid;
+  gap: 12px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.activity-item {
+  display: grid;
+  grid-template-columns: 10px 1fr;
+  gap: 10px;
+  min-width: 0;
+}
+
+.activity-dot {
+  width: 10px;
+  height: 10px;
+  margin-top: 5px;
+  border-radius: 999px;
+  background: var(--accent);
+  box-shadow: 0 0 0 4px rgba(58, 169, 129, 0.12);
+}
+
+.activity-item.success .activity-dot {
+  background: var(--primary);
+}
+
+.activity-item.warning .activity-dot {
+  background: var(--warning);
+  box-shadow: 0 0 0 4px rgba(154, 106, 19, 0.12);
+}
+
+.activity-item.error .activity-dot {
+  background: var(--danger);
+  box-shadow: 0 0 0 4px rgba(173, 47, 47, 0.12);
+}
+
+.activity-heading {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.activity-heading strong {
+  color: var(--text);
+  font-size: 14px;
+}
+
+.activity-heading span {
+  color: var(--muted);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.activity-item p {
+  margin: 4px 0 0;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.advanced-panel {
+  border: 1px solid rgba(205, 228, 215, 0.9);
+  border-radius: var(--radius);
+  background: rgba(255, 255, 255, 0.58);
+  padding: 12px;
+}
+
+.advanced-panel summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  cursor: pointer;
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 750;
+}
+
+.advanced-panel summary strong {
+  color: var(--primary-strong);
+  font-size: 14px;
+}
+
+.advanced-grid {
+  display: grid;
+  grid-template-columns: repeat(12, 1fr);
+  gap: 16px;
+  margin-top: 14px;
 }
 
 .status-grid {

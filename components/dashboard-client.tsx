@@ -6,6 +6,14 @@ import { formatUsdc } from "@/lib/domain/money";
 
 const PAIRING_POLL_INTERVAL_MS = 8_000;
 
+type ActivityLogEntry = {
+  id: string;
+  title: string;
+  detail: string;
+  tone: "info" | "success" | "warning" | "error";
+  time?: string;
+};
+
 type ApiResult = {
   ok?: boolean;
   snapshot?: DashboardSnapshot;
@@ -158,8 +166,8 @@ const copy = {
   zh: {
     language: "English",
     logout: "退出",
-    title: "Agent 自动小额支付演示",
-    subtitle: "演示 AI Agent 如何在用户授权范围内，用真实 CAW 钱包完成小额支付。",
+    title: "Agent 自动支付控制台",
+    subtitle: "先完成账号绑定和 CAW 钱包配对；支付、Venice 和账单放在高级功能里，真实支付会再次确认。",
     ready: "余额充足",
     belowThreshold: "低于阈值",
     credits: "Token 余额",
@@ -270,9 +278,9 @@ const copy = {
   en: {
     language: "中文",
     logout: "Logout",
-    title: "CAW Small Auto-Payment Demo",
+    title: "Agent Auto-Payment Console",
     subtitle:
-      "The agent monitors token balance and triggers small top-ups under CAW Pact and user Guardrails; larger or risky requests move to manual approval.",
+      "Complete account binding and CAW wallet pairing first. Payments, Venice, and billing stay in Advanced and real payment still requires confirmation.",
     ready: "Ready",
     belowThreshold: "Below threshold",
     credits: "Token Balance",
@@ -421,6 +429,20 @@ export function DashboardClient({
   const [venicePaymentConfirmed, setVenicePaymentConfirmed] = useState(false);
   const [venicePrompt, setVenicePrompt] = useState("Summarize the current Venice balance and billing status.");
   const [veniceInference, setVeniceInference] = useState<string>();
+  const [activityLog, setActivityLog] = useState<ActivityLogEntry[]>([]);
+
+  const appendActivity = useCallback((title: string, detail: string, tone: ActivityLogEntry["tone"] = "info") => {
+    setActivityLog((current) => [
+      {
+        id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+        title,
+        detail,
+        tone,
+        time: new Date().toISOString()
+      },
+      ...current
+    ].slice(0, 8));
+  }, []);
 
   const refreshCawStatus = useCallback(async () => {
     const response = await fetch("/api/wallet/caw/status", { cache: "no-store" });
@@ -456,15 +478,17 @@ export function DashboardClient({
       }
       if (result.snapshot?.pairingSession?.status === "paired") {
         setMessage("配对已完成。");
+        appendActivity("手机 App 配对", "配对已完成，后续 Pact 可在手机 App 内审批。", "success");
       }
       if (result.snapshot?.pairingSession?.status === "expired") {
         setMessage("配对码已过期，请重新生成。");
+        appendActivity("手机 App 配对", "配对码已过期，请重新生成后在手机 App 输入。", "warning");
       }
       await refreshCawStatus();
     } catch {
       // Keep automatic polling quiet; the manual refresh button still surfaces errors.
     }
-  }, [busyAction, refreshCawStatus]);
+  }, [appendActivity, busyAction, refreshCawStatus]);
 
   useEffect(() => {
     void refresh();
@@ -514,6 +538,7 @@ export function DashboardClient({
     setBusyAction(action);
     setMessage(undefined);
     setError(undefined);
+    appendActivity(actionLogTitle(action), "已提交请求。", "info");
 
     try {
       const response = await fetch(path, {
@@ -581,10 +606,14 @@ export function DashboardClient({
         setVeniceInference(extractVeniceText(result.result));
       }
 
-      setMessage(statusMessage(action, result, lang));
+      const nextMessage = statusMessage(action, result, lang);
+      setMessage(nextMessage);
+      appendActivity(actionLogTitle(action), nextMessage, "success");
       void refresh();
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "Request failed.");
+      const errorMessage = caught instanceof Error ? caught.message : "Request failed.";
+      setError(errorMessage);
+      appendActivity(actionLogTitle(action), errorMessage, "error");
     } finally {
       setBusyAction(undefined);
     }
@@ -594,6 +623,7 @@ export function DashboardClient({
     setBusyAction(action);
     setMessage(undefined);
     setError(undefined);
+    appendActivity(actionLogTitle(action), "已开始读取状态。", "info");
 
     try {
       const response = await fetch(path, { cache: "no-store" });
@@ -619,10 +649,14 @@ export function DashboardClient({
         }
       }
 
-      setMessage(statusMessage(action, result, lang));
+      const nextMessage = statusMessage(action, result, lang);
+      setMessage(nextMessage);
+      appendActivity(actionLogTitle(action), nextMessage, "success");
       void refresh();
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "Request failed.");
+      const errorMessage = caught instanceof Error ? caught.message : "Request failed.";
+      setError(errorMessage);
+      appendActivity(actionLogTitle(action), errorMessage, "error");
     } finally {
       setBusyAction(undefined);
     }
@@ -688,6 +722,18 @@ export function DashboardClient({
     monthlyLimitUsdc: veniceMonthlyLimitUsdc,
     validDays: veniceValidDays
   });
+  const visibleActivityLog = [
+    ...activityLog,
+    ...buildCurrentActivityLog({
+      snapshot,
+      cawStatus,
+      coboBound,
+      walletProfileBound,
+      walletPaired,
+      authorization,
+      venicePactActive
+    })
+  ].slice(0, 8);
 
   return (
     <main className="page">
@@ -716,7 +762,7 @@ export function DashboardClient({
       <section className="grid">
         <div className="panel span-12 guide-panel">
           <div className="panel-title">
-            <h2>演示流程总览</h2>
+            <h2>当前进度</h2>
             <span className={`status ${cawStatus?.readyForRealPayment ? "active" : "blocked"}`}>
               {cawStatus?.readyForRealPayment ? "真实支付已就绪" : "真实支付未就绪"}
             </span>
@@ -727,28 +773,28 @@ export function DashboardClient({
               title="Cobo ID 绑定"
               status={coboBound ? "已完成" : "待完成"}
               active={coboBound}
-              description="先把 Web 账户和用户的 Cobo ID 关联，后续钱包和账单都归属到这个账户。"
+              description="把当前 Web 账号关联到 Cobo 侧用户。"
             />
             <GuideStep
               index="2"
               title="CAW 钱包配对"
               status={cawStatus?.runtime.walletPaired ? "已完成" : "待完成"}
               active={Boolean(cawStatus?.runtime.walletPaired)}
-              description="手机 CAW App 已绑定 Agent 钱包后，后续 Pact 在手机里审批。"
+              description="创建钱包并用手机 App 输入配对码。"
             />
             <GuideStep
               index="3"
               title="Pact 授权"
               status={missingItems.includes("真实 CAW Pact 授权") ? "待完成" : "已完成"}
               active={!missingItems.includes("真实 CAW Pact 授权")}
-              description="Pact 限制 Agent 能调用哪个合约、最多花多少钱、有效多久。"
+              description="限制 Agent 可用资产、额度和有效期。"
             />
             <GuideStep
               index="4"
               title="真实链上支付"
               status={cawStatus?.readyForRealPayment ? "可执行" : "等待前置条件"}
               active={Boolean(cawStatus?.readyForRealPayment)}
-              description="余额不足时，Agent 通过 CAW 调用合约完成 USDC 充值。"
+              description="余额不足时才进入自动支付路径。"
             />
           </div>
           <div className="next-step">
@@ -757,7 +803,7 @@ export function DashboardClient({
           </div>
         </div>
 
-        <div className="panel span-12">
+        <div className="panel span-8">
           <div className="panel-title">
             <h2>{walletPaired ? "CAW 钱包已配对" : "CAW Wallet 绑定与配对"}</h2>
             <span className={`status ${coboBound ? "active" : "blocked"}`}>
@@ -775,10 +821,9 @@ export function DashboardClient({
               />
             </label>
             <div className="pairing-help">
-              <p>1. 注册后先绑定 Cobo ID；CAW 钱包、配对码、Pact 和账单都会归属到当前 Web 账户。</p>
-              <p>2. 这里不会伪造外部校验结果；手机 App 配对成功后才代表钱包所有权完成确认。</p>
+              <p>用 Cobo ID 标记当前 Web 账户，后续钱包和账单都归到这个用户。</p>
               <p>
-                3. 当前状态：
+                当前：
                 {snapshot.user.coboId
                   ? ` 已绑定 ${snapshot.user.coboId}${
                       snapshot.user.coboIdBoundAt ? `，时间 ${formatTime(snapshot.user.coboIdBoundAt)}` : ""
@@ -822,8 +867,7 @@ export function DashboardClient({
                 />
               </label>
               <div className="pairing-help">
-                <p>我们会为当前登录用户创建独立 CAW CLI profile，并保存创建状态。</p>
-                <p>创建完成后自动绑定 Wallet UUID；之后再生成配对码让用户在 CAW App 接管。</p>
+                <p>新用户从这里创建独立 CAW 钱包。创建完成后系统会自动绑定 Wallet UUID。</p>
               </div>
             </div>
             {onboardingPrompts.length > 0 ? (
@@ -867,22 +911,36 @@ export function DashboardClient({
               </button>
             </div>
           </div>
-          <div className="wallet-profile-form">
-            <label>
-              <span className="metric-label">CAW Wallet UUID</span>
-              <input
-                value={cawWalletId}
-                placeholder={snapshot.user.cawWalletId ?? cawStatus?.runtime.walletId ?? "输入该用户的 CAW Wallet UUID"}
-                onChange={(event) => setCawWalletId(event.target.value)}
-                disabled={walletProfileBound || !coboBound}
-              />
-            </label>
-            <div className="pairing-help">
-              <p>1. 每个登录用户绑定自己的 CAW Wallet UUID，绑定后写入数据库。</p>
-              <p>2. 后续 Pact、approve、支付和状态查询都会使用这个用户自己的 CAW wallet。</p>
-              <p>3. 同一个 CAW wallet 不能绑定到多个应用用户。</p>
+          <details className="inline-details">
+            <summary>已有 CAW Wallet UUID，手动绑定</summary>
+            <div className="wallet-profile-form compact-profile-form">
+              <label>
+                <span className="metric-label">CAW Wallet UUID</span>
+                <input
+                  value={cawWalletId}
+                  placeholder={snapshot.user.cawWalletId ?? cawStatus?.runtime.walletId ?? "输入该用户的 CAW Wallet UUID"}
+                  onChange={(event) => setCawWalletId(event.target.value)}
+                  disabled={walletProfileBound || !coboBound}
+                />
+              </label>
+              <div className="pairing-help">
+                <p>已有 CAW 钱包时才需要填写；新用户直接用上面的“创建 CAW 钱包”。</p>
+              </div>
             </div>
-          </div>
+            <div className="actions">
+              <button
+                className="secondary"
+                onClick={() =>
+                  callAction("connect", "/api/wallet/caw/connect", {
+                    cawWalletId: selectedCawWalletId
+                  })
+                }
+                disabled={busyAction === "connect" || walletProfileBound || !selectedCawWalletId || !coboBound}
+              >
+                {walletProfileBound ? "已绑定 CAW" : "绑定 CAW Wallet"}
+              </button>
+            </div>
+          </details>
           <div className="pairing-box">
             <div>
               <span className="metric-label">{walletPaired ? "当前 CAW 钱包" : "配对码"}</span>
@@ -895,16 +953,13 @@ export function DashboardClient({
             <div className="pairing-help">
               {walletPaired ? (
                 <>
-                  <p>1. 当前 Agent 钱包已经和手机 CAW App 配对。</p>
-                  <p>2. 不需要再输入验证码，重复配对会提示验证失败。</p>
-                  <p>3. 下一步点击“连接 CAW”，再创建或刷新 Pact 授权。</p>
+                  <p>当前 Agent 钱包已经和手机 CAW App 配对。</p>
+                  <p>下一步去高级功能里创建或刷新 Pact 授权。</p>
                 </>
               ) : (
                 <>
-                  <p>1. 点击“生成配对码”。</p>
-                  <p>2. 打开手机 Cobo Agentic Wallet App。</p>
-                  <p>3. 输入这里显示的 8 位配对码。</p>
-                  <p>4. 页面会自动检查配对状态；配对完成后再继续创建 Pact。</p>
+                  <p>点击生成配对码，然后在手机 Cobo Agentic Wallet App 输入。</p>
+                  <p>页面会自动检查配对状态；配对完成后再继续 Pact 授权。</p>
                   {snapshot.pairingSession?.status === "generated" ? (
                     <p>自动检查中，每 8 秒刷新一次。</p>
                   ) : null}
@@ -934,27 +989,47 @@ export function DashboardClient({
             >
               {pairingPollActive ? "正在自动检查" : "刷新配对状态"}
             </button>
-            <button
-              className="secondary"
-              onClick={() =>
-                callAction("connect", "/api/wallet/caw/connect", {
-                  cawWalletId: selectedCawWalletId
-                })
-              }
-              disabled={busyAction === "connect" || walletProfileBound || !selectedCawWalletId || !coboBound}
-            >
-              {walletProfileBound ? "已绑定 CAW" : "绑定 CAW Wallet"}
-            </button>
           </div>
           <p className="metric-label">
             {walletPaired
-              ? "如果换了手机或重装 CAW App，才需要重新生成配对码。当前演示请直接连接 CAW。"
+              ? "如果换了手机或重装 CAW App，才需要重新生成配对码。"
               : snapshot.pairingSession
               ? `过期时间：${formatTime(snapshot.pairingSession.expiresAt)}`
               : "如果新电脑/新钱包还没有配对，先从这里生成验证码。"}
           </p>
         </div>
 
+        <div className="panel span-4 activity-panel">
+          <div className="panel-title">
+            <h2>状态日志</h2>
+            <span className="status active">最近步骤</span>
+          </div>
+          <ul className="activity-list">
+            {visibleActivityLog.map((entry) => (
+              <li className={`activity-item ${entry.tone}`} key={entry.id}>
+                <span className="activity-dot" aria-hidden="true" />
+                <div>
+                  <div className="activity-heading">
+                    <strong>{entry.title}</strong>
+                    <span>{entry.time ? formatTime(entry.time) : "当前"}</span>
+                  </div>
+                  <p>{entry.detail}</p>
+                </div>
+              </li>
+            ))}
+          </ul>
+        </div>
+
+        {(message || error) && (
+          <div className={`notice span-12 ${error ? "error" : ""}`}>{error ?? message}</div>
+        )}
+
+        <details className="advanced-panel span-12">
+          <summary>
+            <span>高级功能</span>
+            <strong>Pact、Venice、支付记录</strong>
+          </summary>
+          <div className="advanced-grid">
         <div className="panel span-8">
           <div className="panel-title">
             <h2>{t.credits}</h2>
@@ -1583,10 +1658,6 @@ export function DashboardClient({
           </div>
         </div>
 
-        {(message || error) && (
-          <div className={`notice span-12 ${error ? "error" : ""}`}>{error ?? message}</div>
-        )}
-
         <div className="panel span-6 demo-hidden">
           <div className="panel-title">
             <h2>{t.pactManagement}</h2>
@@ -1706,6 +1777,8 @@ export function DashboardClient({
             ))}
           </ul>
         </div>
+          </div>
+        </details>
       </section>
     </main>
   );
@@ -1753,6 +1826,95 @@ function GuideStep({
       </div>
     </div>
   );
+}
+
+function actionLogTitle(action: string) {
+  const titles: Record<string, string> = {
+    "cobo-bind": "绑定 Cobo ID",
+    "caw-onboard": "创建 CAW 钱包",
+    connect: "绑定 CAW Wallet",
+    pair: "生成配对码",
+    "refresh-pair": "刷新配对状态",
+    "pact-preview": "生成 Pact 计划",
+    authorize: "提交 Pact",
+    "refresh-pact": "刷新 Pact",
+    "approve-usdc": "授权 USDC",
+    faucet: "领取测试币",
+    run: "运行 Agent",
+    topup: "充值 Credits",
+    "venice-balance": "读取 Venice 余额",
+    "venice-discover": "发现 Venice x402",
+    "venice-pact-preview": "生成 Venice Pact",
+    "venice-authorize": "提交 Venice Pact",
+    "venice-refresh-pact": "刷新 Venice Pact",
+    "venice-topup": "Venice x402 充值",
+    "venice-inference": "运行 Venice inference",
+    guardrails: "生成 Guardrails"
+  };
+
+  return titles[action] ?? "系统操作";
+}
+
+function buildCurrentActivityLog(input: {
+  snapshot: DashboardSnapshot;
+  cawStatus?: CawStatusResult;
+  coboBound: boolean;
+  walletProfileBound: boolean;
+  walletPaired: boolean;
+  authorization?: DashboardSnapshot["authorization"];
+  venicePactActive: boolean;
+}): ActivityLogEntry[] {
+  const pairingStatus = input.snapshot.pairingSession?.status;
+  const walletLabel =
+    input.snapshot.user.cawWalletAddress ?? input.cawStatus?.runtime.walletAddress ?? input.snapshot.user.cawWalletId;
+
+  return [
+    {
+      id: "state-cobo-id",
+      title: "Web 账号",
+      detail: input.coboBound
+        ? `已绑定 Cobo ID：${input.snapshot.user.coboId}`
+        : "等待输入并绑定 Cobo ID。",
+      tone: input.coboBound ? "success" : "warning"
+    },
+    {
+      id: "state-caw-wallet",
+      title: "CAW 钱包",
+      detail: input.walletProfileBound
+        ? `已绑定 ${walletLabel ? shortHash(walletLabel) : "CAW Wallet"}。`
+        : "还没有创建或绑定 CAW Wallet。",
+      tone: input.walletProfileBound ? "success" : "warning"
+    },
+    {
+      id: "state-pairing",
+      title: "手机 App 配对",
+      detail: input.walletPaired
+        ? "已完成配对，后续审批在 Cobo Agentic Wallet App 内完成。"
+        : pairingStatus === "generated"
+          ? "配对码已生成，正在等待手机 App 输入。"
+          : pairingStatus === "expired"
+            ? "配对码已过期，需要重新生成。"
+            : "等待生成配对码。",
+      tone: input.walletPaired ? "success" : pairingStatus === "expired" ? "warning" : "info"
+    },
+    {
+      id: "state-credits-pact",
+      title: "Credits Pact",
+      detail:
+        input.authorization?.status === "active"
+          ? `已激活，单笔上限 ${formatUsdc(input.authorization.singleLimitUsdcMinor)} USDC。`
+          : "未激活，站内 Credits 自动充值不会执行。",
+      tone: input.authorization?.status === "active" ? "success" : "warning"
+    },
+    {
+      id: "state-venice-pact",
+      title: "Venice Pact",
+      detail: input.venicePactActive
+        ? "已激活，可在明确确认后进行 Venice x402 top-up。"
+        : "未激活，Venice x402 top-up 不会执行。",
+      tone: input.venicePactActive ? "success" : "info"
+    }
+  ];
 }
 
 function buildPactBody(input: {

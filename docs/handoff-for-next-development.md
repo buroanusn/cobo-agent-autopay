@@ -2,6 +2,34 @@
 
 Last updated: 2026-06-09, Asia/Shanghai.
 
+## 2026-06-09 Update: Simplified Dashboard First Screen
+
+Simplified the dashboard for first-time users:
+
+- The default dashboard now focuses on:
+  - current setup progress
+  - Cobo ID binding
+  - CAW wallet creation
+  - CAW App pairing code
+  - visible status/activity log
+- Existing advanced controls are retained but moved behind an "高级功能"
+  disclosure:
+  - Credits run/top-up
+  - Credits Pact controls
+  - Venice balance/x402/Pact/inference controls
+  - CAW integration diagnostics
+  - payment records and ledger
+- Added browser-side activity logging for major dashboard actions so test users
+  can see when requests start, succeed, fail, and where the setup is blocked.
+- Moved manual CAW Wallet UUID binding into a small disclosure so new users see
+  the intended path first: bind Cobo ID -> create CAW wallet -> generate pairing
+  code -> pair in the Cobo Agentic Wallet app.
+
+Safety note:
+
+- This update is presentation-only. It does not execute CAW, Pact, x402, or
+  on-chain operations by itself.
+
 ## 2026-06-09 Update: Cobo ID Account Binding
 
 Started the first missing registration/binding gap from the target product flow:
