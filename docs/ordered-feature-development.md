@@ -53,10 +53,12 @@ git diff --check
 
 目标：用户用邮箱注册后，能看懂下一步，并能完成 CAW 钱包创建/配对。
 
+状态：已完成实现和验证，本功能只做本地 commit，不 push。
+
 范围：
 
 - 检查本地数据库 migration 是否包含 `users.coboId`、CAW onboarding、Venice Pact 等字段。
-- 在 UI 上明确说明 Cobo ID 是什么、用户从哪里获取，或者把它降级为高级/可选输入。
+- Cobo ID 已降级为高级/可选输入；主流程使用邮箱 Web 账号作为产品身份。
 - 让默认流程变成：
   1. 邮箱登录。
   2. 创建 CAW 钱包。
@@ -73,7 +75,7 @@ git diff --check
 
 完成标准：
 
-- 新用户不需要理解内部 CAW UUID，就能完成页面上的创建和配对。
+- 新用户不需要理解 Cobo ID 或内部 CAW UUID，就能完成页面上的创建和配对。
 - Dashboard 首屏只出现当前阶段需要的动作。
 - 登录、钱包创建、配对状态的失败原因能在页面上看到。
 
@@ -299,7 +301,7 @@ git diff --check
 3. 运行验证命令。
 4. 更新 `docs/handoff-for-next-development.md`。
 5. 提交一个 commit。
-6. 推送到 `github/main`。
+6. 按当前用户指令决定是否推送；如果用户明确要求不 push，则只保留本地 commit。
 7. 再开始下一个功能。
 
 ## 建议下一步

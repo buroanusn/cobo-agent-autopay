@@ -2,6 +2,31 @@
 
 Last updated: 2026-06-09, Asia/Shanghai.
 
+## 2026-06-09 Update: New User CAW First-Use Flow
+
+Adjusted the first-use flow so a new user no longer needs to know a Cobo ID
+before creating and pairing a CAW wallet:
+
+- The Web account email is now the default product identity for onboarding.
+- `users.coboId` remains in the database as an optional unique external account
+  note, not a required gate for CAW wallet creation or pairing.
+- Dashboard progress now starts with the logged-in email account, then CAW
+  wallet creation, CAW App pairing, and Pact authorization.
+- The Cobo ID form moved into an optional disclosure.
+- Backend CAW onboarding, manual wallet binding, pairing code generation,
+  Pact preview/submission, USDC approval, Credits top-up, and Venice x402
+  readiness no longer require `user.coboId`.
+- Wallet and payment safety gates remain:
+  - wallet IDs and wallet addresses are still unique per Web user
+  - Pact and payment endpoints still require bound CAW wallet state
+  - Venice x402 top-up still requires Base mainnet, CLI wallet profile, active
+    non-mock Venice Pact, and sufficient Pact limits
+
+Safety note:
+
+- This update does not execute real Pact submission, CAW transactions, x402
+  top-up, or on-chain payment by itself.
+
 ## 2026-06-09 Update: Ordered Feature Development Plan
 
 Added a dedicated sequencing document:

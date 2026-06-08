@@ -61,9 +61,6 @@ export async function runVeniceX402Topup(input: {
   assertBaseMainnet();
   const repository = getCreditRepository();
   const user = await repository.requireUser(input.userId);
-  if (!user.coboId) {
-    throw new Error("Bind your Cobo ID before using Venice x402 top-up.");
-  }
   const onboarding = await repository.getCawOnboardingSession(input.userId);
   if (onboarding?.status !== "wallet_active") {
     throw new Error("Venice x402 top-up requires this user's CAW CLI wallet profile.");

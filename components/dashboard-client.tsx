@@ -692,7 +692,7 @@ export function DashboardClient({
   const account = snapshot.account;
   const guardrails = snapshot.guardrails;
   const stats = snapshot.paymentStats;
-  const coboBound = Boolean(snapshot.user.coboId);
+  const coboLinked = Boolean(snapshot.user.coboId);
   const walletProfileBound = Boolean(snapshot.user.cawWalletId && snapshot.user.cawWalletAddress);
   const onboardingActive = onboarding?.status === "wallet_active";
   const onboardingPrompts = onboarding?.prompts ?? [];
@@ -702,7 +702,9 @@ export function DashboardClient({
     snapshot.pairingSession?.status === "generated" && !walletPaired
   );
   const missingItems = cawStatus?.missing.map(formatMissingItem) ?? [];
-  const realPactReady = Boolean(cawStatus) && !missingItems.includes("真实 CAW Pact 授权");
+  const pactMissing =
+    missingItems.includes("有效 Pact 授权") || missingItems.includes("真实 CAW Pact 授权");
+  const realPactReady = Boolean(cawStatus) && !pactMissing;
   const canApproveUsdc = realPactReady && !missingItems.includes("Pact 剩余额度不足");
   const nextStep = getNextStep(missingItems);
   const recentOrders = snapshot.topupOrders.slice(0, 6);
@@ -727,7 +729,7 @@ export function DashboardClient({
     ...buildCurrentActivityLog({
       snapshot,
       cawStatus,
-      coboBound,
+      coboLinked,
       walletProfileBound,
       walletPaired,
       authorization,
@@ -770,31 +772,31 @@ export function DashboardClient({
           <div className="guide-steps">
             <GuideStep
               index="1"
-              title="Cobo ID 绑定"
-              status={coboBound ? "已完成" : "待完成"}
-              active={coboBound}
-              description="把当前 Web 账号关联到 Cobo 侧用户。"
+              title="邮箱账号"
+              status="已登录"
+              active
+              description={`当前 Web 账号：${snapshot.user.email}`}
             />
             <GuideStep
               index="2"
-              title="CAW 钱包配对"
-              status={cawStatus?.runtime.walletPaired ? "已完成" : "待完成"}
-              active={Boolean(cawStatus?.runtime.walletPaired)}
-              description="创建钱包并用手机 App 输入配对码。"
+              title="CAW 钱包创建"
+              status={walletProfileBound ? "已完成" : onboarding?.status ?? "待创建"}
+              active={walletProfileBound}
+              description="为当前 Web 账号创建或绑定独立 CAW 钱包。"
             />
             <GuideStep
               index="3"
-              title="Pact 授权"
-              status={missingItems.includes("真实 CAW Pact 授权") ? "待完成" : "已完成"}
-              active={!missingItems.includes("真实 CAW Pact 授权")}
-              description="限制 Agent 可用资产、额度和有效期。"
+              title="手机 App 配对"
+              status={cawStatus?.runtime.walletPaired ? "已完成" : "待完成"}
+              active={Boolean(cawStatus?.runtime.walletPaired)}
+              description="在 Cobo Agentic Wallet App 输入 Web 端配对码。"
             />
             <GuideStep
               index="4"
-              title="真实链上支付"
-              status={cawStatus?.readyForRealPayment ? "可执行" : "等待前置条件"}
-              active={Boolean(cawStatus?.readyForRealPayment)}
-              description="余额不足时才进入自动支付路径。"
+              title="Pact 授权"
+              status={pactMissing ? "待完成" : "已完成"}
+              active={!pactMissing}
+              description="限制 Agent 可用资产、额度和有效期。"
             />
           </div>
           <div className="next-step">
@@ -806,48 +808,14 @@ export function DashboardClient({
         <div className="panel span-8">
           <div className="panel-title">
             <h2>{walletPaired ? "CAW 钱包已配对" : "CAW Wallet 绑定与配对"}</h2>
-            <span className={`status ${coboBound ? "active" : "blocked"}`}>
-              {coboBound ? "Cobo ID 已绑定" : "等待 Cobo ID"}
+            <span className={`status ${walletPaired || walletProfileBound ? "active" : "blocked"}`}>
+              {walletPaired ? "手机已配对" : walletProfileBound ? "钱包已创建" : "等待创建钱包"}
             </span>
           </div>
           <div className="wallet-profile-form">
-            <label>
-              <span className="metric-label">Cobo ID</span>
-              <input
-                value={coboId}
-                placeholder={snapshot.user.coboId ?? "输入用户的 Cobo ID"}
-                onChange={(event) => setCoboId(event.target.value)}
-                disabled={walletProfileBound && Boolean(snapshot.user.coboId)}
-              />
-            </label>
             <div className="pairing-help">
-              <p>用 Cobo ID 标记当前 Web 账户，后续钱包和账单都归到这个用户。</p>
-              <p>
-                当前：
-                {snapshot.user.coboId
-                  ? ` 已绑定 ${snapshot.user.coboId}${
-                      snapshot.user.coboIdBoundAt ? `，时间 ${formatTime(snapshot.user.coboIdBoundAt)}` : ""
-                    }`
-                  : " 未绑定"}
-              </p>
-            </div>
-            <div className="actions">
-              <button
-                onClick={() =>
-                  callAction("cobo-bind", "/api/account/cobo-id", {
-                    coboId
-                  })
-                }
-                disabled={
-                  busyAction === "cobo-bind" ||
-                  !coboId.trim() ||
-                  (walletProfileBound &&
-                    Boolean(snapshot.user.coboId) &&
-                    coboId.trim().toLowerCase() !== snapshot.user.coboId)
-                }
-              >
-                {snapshot.user.coboId ? "更新 Cobo ID" : "绑定 Cobo ID"}
-              </button>
+              <p>已使用 {snapshot.user.email} 登录。系统会把 CAW 钱包、Pact 和账单记录绑定到这个 Web 账号。</p>
+              <p>Cobo ID 是可选资料，不影响新用户创建钱包和手机配对。</p>
             </div>
           </div>
           <div className="onboarding-card">
@@ -863,7 +831,7 @@ export function DashboardClient({
                 <input
                   value={cawAgentName}
                   onChange={(event) => setCawAgentName(event.target.value)}
-                  disabled={!coboBound || walletProfileBound || busyAction === "caw-onboard"}
+                  disabled={walletProfileBound || busyAction === "caw-onboard"}
                 />
               </label>
               <div className="pairing-help">
@@ -905,7 +873,7 @@ export function DashboardClient({
                     answers: onboardingPrompts.length > 0 ? cawOnboardingAnswers : undefined
                   })
                 }
-                disabled={busyAction === "caw-onboard" || walletProfileBound || !coboBound}
+                disabled={busyAction === "caw-onboard" || walletProfileBound}
               >
                 {onboardingPrompts.length > 0 ? "提交创建信息" : onboarding ? "继续创建钱包" : "创建 CAW 钱包"}
               </button>
@@ -920,7 +888,7 @@ export function DashboardClient({
                   value={cawWalletId}
                   placeholder={snapshot.user.cawWalletId ?? cawStatus?.runtime.walletId ?? "输入该用户的 CAW Wallet UUID"}
                   onChange={(event) => setCawWalletId(event.target.value)}
-                  disabled={walletProfileBound || !coboBound}
+                  disabled={walletProfileBound}
                 />
               </label>
               <div className="pairing-help">
@@ -935,9 +903,52 @@ export function DashboardClient({
                     cawWalletId: selectedCawWalletId
                   })
                 }
-                disabled={busyAction === "connect" || walletProfileBound || !selectedCawWalletId || !coboBound}
+                disabled={busyAction === "connect" || walletProfileBound || !selectedCawWalletId}
               >
                 {walletProfileBound ? "已绑定 CAW" : "绑定 CAW Wallet"}
+              </button>
+            </div>
+          </details>
+          <details className="inline-details">
+            <summary>可选：记录 Cobo ID</summary>
+            <div className="wallet-profile-form compact-profile-form">
+              <label>
+                <span className="metric-label">Cobo ID</span>
+                <input
+                  value={coboId}
+                  placeholder={snapshot.user.coboId ?? "可填写 Cobo 账号标识或内部客户 ID"}
+                  onChange={(event) => setCoboId(event.target.value)}
+                  disabled={walletProfileBound && Boolean(snapshot.user.coboId)}
+                />
+              </label>
+              <div className="pairing-help">
+                <p>
+                  当前：
+                  {snapshot.user.coboId
+                    ? ` 已记录 ${snapshot.user.coboId}${
+                        snapshot.user.coboIdBoundAt ? `，时间 ${formatTime(snapshot.user.coboIdBoundAt)}` : ""
+                      }`
+                    : " 未填写，不影响钱包创建和手机配对"}
+                </p>
+              </div>
+            </div>
+            <div className="actions">
+              <button
+                className="secondary"
+                onClick={() =>
+                  callAction("cobo-bind", "/api/account/cobo-id", {
+                    coboId
+                  })
+                }
+                disabled={
+                  busyAction === "cobo-bind" ||
+                  !coboId.trim() ||
+                  (walletProfileBound &&
+                    Boolean(snapshot.user.coboId) &&
+                    coboId.trim().toLowerCase() !== snapshot.user.coboId)
+                }
+              >
+                {snapshot.user.coboId ? "更新 Cobo ID" : "保存 Cobo ID"}
               </button>
             </div>
           </details>
@@ -973,7 +984,7 @@ export function DashboardClient({
           <div className="actions">
             <button
               onClick={() => callAction("pair", "/api/wallet/caw/pairing-code")}
-              disabled={busyAction === "pair" || walletPaired || !walletProfileBound || !coboBound}
+              disabled={busyAction === "pair" || walletPaired || !walletProfileBound}
             >
               {walletPaired ? "已配对，无需生成" : "生成配对码"}
             </button>
@@ -1177,7 +1188,7 @@ export function DashboardClient({
             <button
               className="secondary demo-hidden"
               onClick={() => callAction("pair", "/api/wallet/caw/pairing-code")}
-              disabled={busyAction === "pair" || !coboBound || !walletProfileBound}
+              disabled={busyAction === "pair" || !walletProfileBound}
             >
               {t.pair}
             </button>
@@ -1188,7 +1199,7 @@ export function DashboardClient({
                   cawWalletId: selectedCawWalletId
                 })
               }
-              disabled={busyAction === "connect" || walletProfileBound || !selectedCawWalletId || !coboBound}
+              disabled={busyAction === "connect" || walletProfileBound || !selectedCawWalletId}
             >
               {t.connect}
             </button>
@@ -1830,7 +1841,7 @@ function GuideStep({
 
 function actionLogTitle(action: string) {
   const titles: Record<string, string> = {
-    "cobo-bind": "绑定 Cobo ID",
+    "cobo-bind": "保存 Cobo ID",
     "caw-onboard": "创建 CAW 钱包",
     connect: "绑定 CAW Wallet",
     pair: "生成配对码",
@@ -1858,7 +1869,7 @@ function actionLogTitle(action: string) {
 function buildCurrentActivityLog(input: {
   snapshot: DashboardSnapshot;
   cawStatus?: CawStatusResult;
-  coboBound: boolean;
+  coboLinked: boolean;
   walletProfileBound: boolean;
   walletPaired: boolean;
   authorization?: DashboardSnapshot["authorization"];
@@ -1872,10 +1883,10 @@ function buildCurrentActivityLog(input: {
     {
       id: "state-cobo-id",
       title: "Web 账号",
-      detail: input.coboBound
-        ? `已绑定 Cobo ID：${input.snapshot.user.coboId}`
-        : "等待输入并绑定 Cobo ID。",
-      tone: input.coboBound ? "success" : "warning"
+      detail: input.coboLinked
+        ? `已登录 ${input.snapshot.user.email}，已记录 Cobo ID：${input.snapshot.user.coboId}`
+        : `已登录 ${input.snapshot.user.email}。Cobo ID 未填写，不影响钱包创建和手机配对。`,
+      tone: "success"
     },
     {
       id: "state-caw-wallet",
@@ -2016,7 +2027,6 @@ function formatEth(value: string) {
 
 function formatMissingItem(item: string) {
   const translations: Record<string, string> = {
-    "Cobo ID binding": "Cobo ID 绑定",
     "CAW API URL/API key": "CAW 接口配置",
     "CAW CLI profile": "CAW CLI 用户钱包",
     "CAW wallet id": "CAW 钱包 ID",
@@ -2040,13 +2050,17 @@ function formatMissingItem(item: string) {
 }
 
 function getNextStep(missingItems: string[]) {
-  if (missingItems.includes("Cobo ID 绑定")) {
-    return "先输入并绑定 Cobo ID，再创建或绑定 CAW 钱包。";
+  if (
+    missingItems.includes("CAW CLI 用户钱包") ||
+    missingItems.includes("CAW 钱包 ID") ||
+    missingItems.includes("连接 CAW 钱包地址")
+  ) {
+    return "先创建 CAW 钱包；已有钱包时可在手动入口绑定 Wallet UUID。";
   }
   if (missingItems.includes("手机 App 配对")) {
     return "先在手机 CAW App 完成钱包配对。";
   }
-  if (missingItems.includes("真实 CAW Pact 授权")) {
+  if (missingItems.includes("有效 Pact 授权") || missingItems.includes("真实 CAW Pact 授权")) {
     return "先给 CAW 钱包准备当前网络的 ETH gas 和 USDC，然后创建真实 Pact 并在手机 App 里批准。";
   }
   if (missingItems.includes("Pact 剩余额度不足")) {
@@ -2215,7 +2229,7 @@ function statusMessage(action: string, result: ApiResult, lang: Lang) {
   }
 
   if (action === "cobo-bind") {
-    return "Cobo ID 已绑定到当前 Web 账户。";
+    return "Cobo ID 已保存到当前 Web 账户。";
   }
 
   if (action === "authorize") {
