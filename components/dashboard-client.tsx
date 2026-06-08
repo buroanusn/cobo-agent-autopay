@@ -1,8 +1,10 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import type { DashboardSnapshot, LedgerEntry, TopupOrder, TopupOrderStatus } from "@/lib/domain/types";
 import { formatUsdc } from "@/lib/domain/money";
+
+const PAIRING_POLL_INTERVAL_MS = 8_000;
 
 type ApiResult = {
   ok?: boolean;
@@ -420,9 +422,71 @@ export function DashboardClient({
   const [venicePrompt, setVenicePrompt] = useState("Summarize the current Venice balance and billing status.");
   const [veniceInference, setVeniceInference] = useState<string>();
 
+  const refreshCawStatus = useCallback(async () => {
+    const response = await fetch("/api/wallet/caw/status", { cache: "no-store" });
+    if (response.status === 401) {
+      window.location.href = "/login";
+      return;
+    }
+    if (response.ok) {
+      setCawStatus((await response.json()) as CawStatusResult);
+    }
+  }, []);
+
+  const refreshPairingInBackground = useCallback(async () => {
+    if (busyAction === "refresh-pair" || busyAction === "pair") {
+      return;
+    }
+    try {
+      const response = await fetch("/api/wallet/caw/pairing-code/refresh", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({})
+      });
+      const result = (await response.json()) as ApiResult;
+      if (response.status === 401) {
+        window.location.href = "/login";
+        return;
+      }
+      if (!response.ok || result.error) {
+        return;
+      }
+      if (result.snapshot) {
+        setSnapshot(result.snapshot);
+      }
+      if (result.snapshot?.pairingSession?.status === "paired") {
+        setMessage("配对已完成。");
+      }
+      if (result.snapshot?.pairingSession?.status === "expired") {
+        setMessage("配对码已过期，请重新生成。");
+      }
+      await refreshCawStatus();
+    } catch {
+      // Keep automatic polling quiet; the manual refresh button still surfaces errors.
+    }
+  }, [busyAction, refreshCawStatus]);
+
   useEffect(() => {
     void refresh();
   }, []);
+
+  useEffect(() => {
+    const pairingSession = snapshot.pairingSession;
+    if (!pairingSession || pairingSession.status !== "generated" || cawStatus?.runtime.walletPaired) {
+      return;
+    }
+
+    const expiresAt = Date.parse(pairingSession.expiresAt);
+    if (Number.isNaN(expiresAt) || expiresAt <= Date.now()) {
+      void refreshPairingInBackground();
+      return;
+    }
+
+    const timer = window.setInterval(() => {
+      void refreshPairingInBackground();
+    }, PAIRING_POLL_INTERVAL_MS);
+    return () => window.clearInterval(timer);
+  }, [snapshot.pairingSession, cawStatus?.runtime.walletPaired, refreshPairingInBackground]);
 
   async function refresh() {
     const [snapshotResponse, cawStatusResponse] = await Promise.all([
@@ -600,6 +664,9 @@ export function DashboardClient({
   const onboardingPrompts = onboarding?.prompts ?? [];
   const selectedCawWalletId = cawWalletId.trim() || cawStatus?.runtime.walletId || snapshot.user.cawWalletId || "";
   const walletPaired = Boolean(cawStatus?.runtime.walletPaired);
+  const pairingPollActive = Boolean(
+    snapshot.pairingSession?.status === "generated" && !walletPaired
+  );
   const missingItems = cawStatus?.missing.map(formatMissingItem) ?? [];
   const realPactReady = Boolean(cawStatus) && !missingItems.includes("真实 CAW Pact 授权");
   const canApproveUsdc = realPactReady && !missingItems.includes("Pact 剩余额度不足");
@@ -837,7 +904,13 @@ export function DashboardClient({
                   <p>1. 点击“生成配对码”。</p>
                   <p>2. 打开手机 Cobo Agentic Wallet App。</p>
                   <p>3. 输入这里显示的 8 位配对码。</p>
-                  <p>4. 配对后点击“连接 CAW”。</p>
+                  <p>4. 页面会自动检查配对状态；配对完成后再继续创建 Pact。</p>
+                  {snapshot.pairingSession?.status === "generated" ? (
+                    <p>自动检查中，每 8 秒刷新一次。</p>
+                  ) : null}
+                  {snapshot.pairingSession?.status === "expired" ? (
+                    <p>配对码已过期，请重新生成。</p>
+                  ) : null}
                 </>
               )}
             </div>
@@ -852,9 +925,14 @@ export function DashboardClient({
             <button
               className="secondary"
               onClick={() => callAction("refresh-pair", "/api/wallet/caw/pairing-code/refresh")}
-              disabled={busyAction === "refresh-pair" || walletPaired || !snapshot.pairingSession}
+              disabled={
+                busyAction === "refresh-pair" ||
+                walletPaired ||
+                !snapshot.pairingSession ||
+                snapshot.pairingSession.status !== "generated"
+              }
             >
-              刷新配对状态
+              {pairingPollActive ? "正在自动检查" : "刷新配对状态"}
             </button>
             <button
               className="secondary"

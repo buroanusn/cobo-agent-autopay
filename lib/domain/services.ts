@@ -419,6 +419,16 @@ export async function refreshPairingStatus(input: { userId?: string }) {
       snapshot: await repository.snapshotForUser(userId)
     };
   }
+  if (Date.parse(existing.expiresAt) <= Date.now()) {
+    const expired = await repository.createPairingSession(userId, {
+      ...existing,
+      status: "expired"
+    });
+    return {
+      pairingSession: expired,
+      snapshot: await repository.snapshotForUser(userId)
+    };
+  }
   const onboarding = await repository.getCawOnboardingSession(userId);
   if (onboarding?.status !== "wallet_active") {
     return {

@@ -27,6 +27,27 @@ Important limitation:
   It records the user's Cobo ID as the Web account binding identifier. Wallet
   ownership is still verified by CAW wallet/App pairing.
 
+## 2026-06-09 Update: Pairing Status Auto Polling
+
+Improved the registration/binding stage after Cobo ID binding:
+
+- Dashboard now automatically refreshes CAW pairing status while a pairing code
+  is in `generated` state and the wallet is not paired.
+- Polling runs from the browser every 8 seconds and stops when pairing is
+  completed, expired, or the page is left.
+- The manual refresh button remains available as a fallback and is disabled
+  after terminal states.
+- Server-side pairing refresh now marks a locally expired pairing code as
+  `expired` before attempting upstream CLI status checks.
+- The UI clearly tells the user when automatic checking is active or when the
+  pairing code has expired.
+
+Important limitation:
+
+- This is not yet a production background worker. It covers the MVP dashboard
+  experience; a server-side job/queue should still be added for production
+  pairing status tracking when users leave the page.
+
 ## 2026-06-08 Update: Venice Pact Template And Dashboard Panel
 
 Added the first real Venice x402 UI path:
