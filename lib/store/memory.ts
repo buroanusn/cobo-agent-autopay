@@ -11,8 +11,10 @@ import {
 import type {
   AgentUsageEvent,
   CawAuthorization,
+  CawAuthorizationPurpose,
   CreditAccount,
   CawPairingSession,
+  CawWalletOnboardingSession,
   DashboardSnapshot,
   LedgerEntry,
   TopupOrder,
@@ -28,6 +30,7 @@ type AgentDb = {
   usageEvents: AgentUsageEvent[];
   chainEventsSeen: Set<string>;
   pairingSessions: Map<string, CawPairingSession>;
+  cawOnboardingSessions: Map<string, CawWalletOnboardingSession>;
 };
 
 const globalStore = globalThis as typeof globalThis & {
@@ -75,7 +78,8 @@ function createInitialDb(): AgentDb {
     topupOrders: new Map(),
     usageEvents: [],
     chainEventsSeen: new Set(),
-    pairingSessions: new Map()
+    pairingSessions: new Map(),
+    cawOnboardingSessions: new Map()
   };
 }
 
@@ -128,9 +132,12 @@ export function requireCreditAccount(userId: string) {
   return account;
 }
 
-export function getActiveAuthorization(userId: string) {
+export function getActiveAuthorization(
+  userId: string,
+  purpose: CawAuthorizationPurpose = "credits_payment"
+) {
   const auths = [...db.cawAuthorizations.values()].filter(
-    (authorization) => authorization.userId === userId
+    (authorization) => authorization.userId === userId && authorization.purpose === purpose
   );
   return auths.sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0];
 }
@@ -139,9 +146,16 @@ export function snapshotForUser(userId: string): DashboardSnapshot {
   const user = requireUser(userId);
   const account = requireCreditAccount(userId);
   const authorization = getActiveAuthorization(userId);
+  const veniceAuthorization = getActiveAuthorization(userId, "venice_x402");
   const publicAuthorization = authorization
     ? {
         ...authorization,
+        pactApiKey: undefined
+      }
+    : undefined;
+  const publicVeniceAuthorization = veniceAuthorization
+    ? {
+        ...veniceAuthorization,
         pactApiKey: undefined
       }
     : undefined;
@@ -160,7 +174,9 @@ export function snapshotForUser(userId: string): DashboardSnapshot {
     user,
     account,
     authorization: publicAuthorization,
+    veniceAuthorization: publicVeniceAuthorization,
     pairingSession: db.pairingSessions.get(userId),
+    cawOnboardingSession: db.cawOnboardingSessions.get(userId),
     guardrails: {
       singleLimitUsdcMinor:
         authorization?.singleLimitUsdcMinor ?? DEFAULT_SPEND_POLICY.singleLimitUsdcMinor,

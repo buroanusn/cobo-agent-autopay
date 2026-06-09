@@ -4,6 +4,8 @@ export type CawAuthorizationStatus =
   | "expired"
   | "revoked";
 
+export type CawAuthorizationPurpose = "credits_payment" | "venice_x402";
+
 export type TopupOrderStatus =
   | "pending_policy"
   | "caw_submitted"
@@ -18,6 +20,8 @@ export type AgentUsageStatus = "completed" | "failed_insufficient_balance";
 export type User = {
   id: string;
   email: string;
+  coboId?: string;
+  coboIdBoundAt?: string;
   cawWalletId?: string;
   cawWalletAddress?: string;
   createdAt: string;
@@ -34,6 +38,7 @@ export type CreditAccount = {
 export type CawAuthorization = {
   id: string;
   userId: string;
+  purpose: CawAuthorizationPurpose;
   walletAddress: string;
   pactId: string;
   pactApiKey?: string;
@@ -97,6 +102,42 @@ export type CawPairingSession = {
   createdAt: string;
 };
 
+export type CawOnboardingStatus =
+  | "not_started"
+  | "waiting_input"
+  | "running"
+  | "wallet_active"
+  | "failed";
+
+export type CawOnboardingPrompt = {
+  id: string;
+  label?: string;
+  message?: string;
+  type?: string;
+  required?: boolean;
+  secret?: boolean;
+  options?: string[];
+};
+
+export type CawWalletOnboardingSession = {
+  userId: string;
+  sessionId?: string;
+  status: CawOnboardingStatus;
+  phase?: string;
+  walletStatus?: string;
+  needsInput: boolean;
+  prompts: CawOnboardingPrompt[];
+  nextAction?: string;
+  lastError?: string;
+  agentName?: string;
+  apiUrl?: string;
+  walletId?: string;
+  walletName?: string;
+  agentId?: string;
+  createdAt: string;
+  updatedAt: string;
+};
+
 export type UserGuardrails = {
   singleLimitUsdcMinor: number;
   dailyLimitUsdcMinor: number;
@@ -130,7 +171,9 @@ export type DashboardSnapshot = {
   user: User;
   account: CreditAccount;
   authorization?: CawAuthorization;
+  veniceAuthorization?: CawAuthorization;
   pairingSession?: CawPairingSession;
+  cawOnboardingSession?: CawWalletOnboardingSession;
   guardrails: UserGuardrails;
   paymentStats: PaymentStats;
   pendingApprovals: TopupOrder[];

@@ -1,6 +1,268 @@
 # Handoff For Next Development
 
-Last updated: 2026-06-05, Asia/Shanghai.
+Last updated: 2026-06-09, Asia/Shanghai.
+
+## 2026-06-09 Update: New User CAW First-Use Flow
+
+Adjusted the first-use flow so a new user no longer needs to know a Cobo ID
+before creating and pairing a CAW wallet:
+
+- The Web account email is now the default product identity for onboarding.
+- `users.coboId` remains in the database as an optional unique external account
+  note, not a required gate for CAW wallet creation or pairing.
+- Dashboard progress now starts with the logged-in email account, then CAW
+  wallet creation, CAW App pairing, and Pact authorization.
+- The Cobo ID form moved into an optional disclosure.
+- Backend CAW onboarding, manual wallet binding, pairing code generation,
+  Pact preview/submission, USDC approval, Credits top-up, and Venice x402
+  readiness no longer require `user.coboId`.
+- Wallet and payment safety gates remain:
+  - wallet IDs and wallet addresses are still unique per Web user
+  - Pact and payment endpoints still require bound CAW wallet state
+  - Venice x402 top-up still requires Base mainnet, CLI wallet profile, active
+    non-mock Venice Pact, and sufficient Pact limits
+
+Safety note:
+
+- This update does not execute real Pact submission, CAW transactions, x402
+  top-up, or on-chain payment by itself.
+
+## 2026-06-09 Update: Ordered Feature Development Plan
+
+Added a dedicated sequencing document:
+
+- `docs/ordered-feature-development.md`
+
+Purpose:
+
+- Keep the next phase strictly one feature at a time.
+- Put new-user onboarding before Venice automation because current testing is
+  blocked by user confusion around Cobo ID / CAW wallet creation.
+- Make every feature independently testable, validated, committed, and pushed
+  before starting the next one.
+- Preserve the real-money boundary: no real Pact submission, CAW transaction,
+  x402 top-up, or on-chain operation during development/testing without
+  explicit user confirmation.
+
+Recommended next feature:
+
+```text
+1. 新用户首次使用流程校准
+```
+
+## 2026-06-09 Update: Simplified Dashboard First Screen
+
+Simplified the dashboard for first-time users:
+
+- The default dashboard now focuses on:
+  - current setup progress
+  - Cobo ID binding
+  - CAW wallet creation
+  - CAW App pairing code
+  - visible status/activity log
+- Existing advanced controls are retained but moved behind an "高级功能"
+  disclosure:
+  - Credits run/top-up
+  - Credits Pact controls
+  - Venice balance/x402/Pact/inference controls
+  - CAW integration diagnostics
+  - payment records and ledger
+- Added browser-side activity logging for major dashboard actions so test users
+  can see when requests start, succeed, fail, and where the setup is blocked.
+- Moved manual CAW Wallet UUID binding into a small disclosure so new users see
+  the intended path first: bind Cobo ID -> create CAW wallet -> generate pairing
+  code -> pair in the Cobo Agentic Wallet app.
+
+Safety note:
+
+- This update is presentation-only. It does not execute CAW, Pact, x402, or
+  on-chain operations by itself.
+
+## 2026-06-09 Update: Cobo ID Account Binding
+
+Started the first missing registration/binding gap from the target product flow:
+
+- Added a first-class Cobo ID binding step after email login.
+- Added Prisma fields on `User`:
+  - `coboId`
+  - `coboIdBoundAt`
+- Added migration:
+  - `prisma/migrations/20260609093000_add_user_cobo_id/`
+- Added `POST /api/account/cobo-id` for logged-in users to bind a Cobo ID.
+- Added duplicate Cobo ID checks across users.
+- Cobo ID is normalized to lowercase and constrained to a short visible ID format.
+- Dashboard now shows Cobo ID as the first step before CAW wallet creation,
+  manual CAW Wallet UUID binding, and pairing code generation.
+- Backend now blocks CAW wallet creation/binding, pairing code generation,
+  Pact creation, USDC approval, credits top-up, and Venice x402 top-up until
+  the logged-in account has a Cobo ID.
+
+Important limitation:
+
+- This does not claim external Cobo account ownership is verified by a Cobo API.
+  It records the user's Cobo ID as the Web account binding identifier. Wallet
+  ownership is still verified by CAW wallet/App pairing.
+
+## 2026-06-09 Update: Pairing Status Auto Polling
+
+Improved the registration/binding stage after Cobo ID binding:
+
+- Dashboard now automatically refreshes CAW pairing status while a pairing code
+  is in `generated` state and the wallet is not paired.
+- Polling runs from the browser every 8 seconds and stops when pairing is
+  completed, expired, or the page is left.
+- The manual refresh button remains available as a fallback and is disabled
+  after terminal states.
+- Server-side pairing refresh now marks a locally expired pairing code as
+  `expired` before attempting upstream CLI status checks.
+- The UI clearly tells the user when automatic checking is active or when the
+  pairing code has expired.
+
+Important limitation:
+
+- This is not yet a production background worker. It covers the MVP dashboard
+  experience; a server-side job/queue should still be added for production
+  pairing status tracking when users leave the page.
+
+## 2026-06-08 Update: Venice Pact Template And Dashboard Panel
+
+Added the first real Venice x402 UI path:
+
+- Added a dedicated CAW authorization purpose field so Pact records are scoped:
+  - `credits_payment` remains the existing CreditsPayment authorization path.
+  - `venice_x402` is used only for Venice x402 top-up.
+- Added Prisma migration:
+  - `prisma/migrations/20260608103000_add_caw_authorization_purpose/`
+- Added Venice Pact APIs:
+  - `POST /api/venice/pact` with `previewOnly: true` generates a Venice
+    Pact preview/template.
+  - `POST /api/venice/pact` submits the Venice Pact through the user's CAW CLI
+    profile.
+  - `POST /api/venice/pact/refresh` refreshes the Venice Pact status through
+    CAW CLI.
+- Venice Pact template is deterministic and explicitly scoped to:
+  - Base mainnet CAW chain ID `BASE_ETH`
+  - Base mainnet native USDC token ID `BASE_USDC`
+  - Base USDC contract `0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913`
+  - Venice x402 payTo discovered from the real 402 requirement
+  - user-visible single/daily/monthly limits and validity
+- `GET /api/venice/x402-topup` now discovers Base mainnet USDC requirements
+  independent of the current testnet app config. `POST /api/venice/x402-topup`
+  still requires `CHAIN_ENV=base-mainnet`.
+- `POST /api/venice/x402-topup` now reads only the active `venice_x402` Pact
+  and records product-side daily/monthly Pact spend after successful CAW x402
+  execution.
+- Dashboard now has a Venice AI panel for:
+  - billing balance
+  - x402 payment requirement discovery
+  - Venice Pact preview / submit / refresh
+  - explicit real-payment checkbox plus browser confirmation before top-up
+  - standalone Venice inference
+- `POST /api/venice/x402-topup` also requires `confirmed: true` in the
+  request body; the dashboard only sends it after the explicit UI confirmation.
+- The old mock x402 resource button is no longer exposed in the main dashboard
+  flow.
+
+Current validation for this update:
+
+```text
+npm run db:generate
+npm run typecheck
+npm run lint
+npm run contract:compile
+npm run build
+git diff --check
+```
+
+## 2026-06-08 Update: Real Mainnet Direction
+
+Product direction changed from Base Sepolia-first verification to real
+environment execution first:
+
+- Keep the existing CAW SDK + CreditsPayment flow for the current product path.
+- Add CAW CLI support instead of replacing the SDK wholesale.
+- The app now has a CAW CLI onboarding foundation so the site can create and
+bind a CAW wallet for each logged-in user.
+- Each app user gets an isolated CAW CLI `HOME` under `CAW_CLI_HOME_ROOT`
+  instead of sharing the server user's active CAW profile.
+- `.caw-cli-homes/` is ignored by git because it may contain local CAW
+  profile credentials.
+- Venice AI integration is started as backend APIs:
+  - `GET /api/venice/balance` reads Venice billing balance with
+    `VENICE_API_KEY`.
+  - `POST /api/venice/inference` calls Venice chat completions with
+    `VENICE_API_KEY`.
+  - `GET /api/venice/x402-topup` discovers Venice x402 payment requirements
+    without spending.
+  - `POST /api/venice/x402-topup` executes a real CAW CLI
+    `caw fetch --protocol x402` top-up. It is gated to Base mainnet USDC.
+
+New CAW wallet creation flow:
+
+1. Logged-in user clicks "创建 CAW 钱包" in the dashboard.
+2. Backend calls `caw onboard` inside that user's isolated CAW CLI HOME.
+3. The app stores `session_id`, `phase`, `prompts`, `needs_input`,
+   `wallet_status`, and error/next-action metadata in
+   `caw_wallet_onboarding_sessions`.
+4. Follow-up calls always reuse the stored `session_id`.
+5. When the CLI reports the wallet is active, the app reads the user's CAW CLI
+   profile and binds `wallet_uuid` + EVM address to the app user.
+6. Pairing code generation uses the user's isolated CLI profile when the wallet
+   was created through CLI onboarding.
+
+Important real-money guardrails:
+
+- `POST /api/venice/x402-topup` is the first Venice endpoint that can spend
+  real USDC. Do not call it during smoke tests.
+- The endpoint requires:
+  - `CHAIN_ENV=base-mainnet`
+  - bound user CAW wallet
+  - active non-mock Pact
+  - unexpired Pact with enough single/monthly spend
+  - Venice offering Base mainnet USDC in its 402 `accepts`
+- The `--max-amount` passed to `caw fetch` is exactly the requested amount in
+  USDC minor units; if Venice asks for more, CAW CLI should refuse the payment.
+
+Validation completed for this update:
+
+```text
+npm run db:generate
+npm run typecheck
+npm run lint
+npm run contract:compile
+npm run build
+git diff --check
+```
+
+Local HTTP smoke completed:
+
+```text
+GET /dashboard unauthenticated -> 307 /login
+GET /api/wallet/caw/onboarding unauthenticated -> 401
+POST /api/auth/login -> 200
+GET /dashboard authenticated -> 200
+GET /api/wallet/caw/onboarding authenticated -> 200
+GET /api/wallet/caw/status authenticated -> 200
+```
+
+Local Prisma migration applied:
+
+```text
+20260608093000_add_caw_cli_onboarding
+```
+
+Remaining implementation work:
+
+- Add a dedicated Venice Pact template/preview so the CAW App approval clearly
+  authorizes Venice x402 top-ups on Base mainnet USDC.
+- Add frontend controls for Venice balance, top-up amount, and inference once
+  the real Pact wording is finalized.
+- Decide whether internal CreditsPayment approvals/execution should also move
+  to CAW CLI for CLI-created wallets, or remain SDK-only.
+- Add production-grade background jobs for payment/order polling instead of
+  relying only on manual refresh.
+- Add encrypted storage or managed secret handling before deploying isolated
+  CAW CLI homes to a shared production server.
 
 ## Current Status
 

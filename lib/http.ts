@@ -43,11 +43,7 @@ function extractErrorStatus(error: unknown) {
   if (!isRecord(error) || typeof error.status !== "number") {
     return undefined;
   }
-  const status = error.status;
-  if (status >= 200 && status <= 599) {
-    return status;
-  }
-  return undefined;
+  return error.status;
 }
 
 function sanitizeErrorData(value: unknown): unknown {

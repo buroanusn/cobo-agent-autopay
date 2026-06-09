@@ -1,55 +1,54 @@
-import { NextRequest } from "next/server";
 import { requireCurrentUser } from "@/lib/auth/session";
+import { errorJson, okJson, readJson } from "@/lib/http";
 import {
   discoverVeniceX402Requirements,
-  pickBaseUsdcAccept,
+  pickVeniceBaseUsdcAccept,
   runVeniceX402Topup
 } from "@/lib/venice/topup";
-import { errorJson, okJson, readJson } from "@/lib/http";
 
 export const dynamic = "force-dynamic";
+
+type TopupBody = {
+  amountUsdc?: number;
+  amountUsdcMinor?: number;
+  confirmed?: boolean;
+};
 
 export async function GET() {
   try {
     await requireCurrentUser();
-    const reqs = await discoverVeniceX402Requirements();
-    const accept = pickBaseUsdcAccept(reqs);
+    const requirements = await discoverVeniceX402Requirements();
     return okJson({
       ok: true,
-      requirements: reqs,
-      selected: accept
+      requirements,
+      selected: pickVeniceBaseUsdcAccept(requirements)
     });
   } catch (error) {
     return errorJson(error);
   }
 }
 
-export async function POST(request: NextRequest) {
+export async function POST(request: Request) {
   try {
     const user = await requireCurrentUser();
-    const body = await readJson<{ usdAmount?: number }>(request);
-    const usdAmount = Number(body.usdAmount);
-    if (!Number.isFinite(usdAmount) || usdAmount <= 0) {
-      return errorJson(new Error("usdAmount must be a positive number"), 400);
+    const body = await readJson<TopupBody>(request);
+    if (body.confirmed !== true) {
+      throw new Error("Explicit confirmation is required before executing a real Venice x402 top-up.");
     }
-
-    const repo = await import("@/lib/store").then((m) => m.getCreditRepository());
-    const snapshot = await repo.snapshotForUser(user.id);
-    if (!snapshot.user.cawWalletAddress) {
-      return errorJson(new Error("Connect a CAW wallet first (Connect Wallet card)."), 400);
-    }
-    if (!snapshot.authorization || snapshot.authorization.status !== "active") {
-      return errorJson(new Error("Create and approve an active Pact first (CAW Pact card)."), 400);
-    }
-
-    const result = await runVeniceX402Topup({
-      userId: user.id,
-      walletAddress: snapshot.user.cawWalletAddress,
-      pactId: snapshot.authorization.pactId,
-      usdAmount
-    });
-    return okJson({ ok: result.status === "submitted", ...result });
+    const amountUsdcMinor = parseAmountUsdcMinor(body);
+    return okJson(await runVeniceX402Topup({ userId: user.id, amountUsdcMinor }));
   } catch (error) {
     return errorJson(error);
   }
+}
+
+function parseAmountUsdcMinor(body: Partial<TopupBody>) {
+  if (Number.isFinite(body.amountUsdcMinor) && Number(body.amountUsdcMinor) > 0) {
+    return Math.floor(Number(body.amountUsdcMinor));
+  }
+  if (Number.isFinite(body.amountUsdc) && Number(body.amountUsdc) > 0) {
+    return Math.floor(Number(body.amountUsdc) * 1_000_000);
+  }
+  const configured = Number(process.env.VENICE_X402_DEFAULT_USDC_MINOR || 1_000_000);
+  return Number.isFinite(configured) && configured > 0 ? Math.floor(configured) : 1_000_000;
 }

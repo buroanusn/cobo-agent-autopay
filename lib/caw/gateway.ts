@@ -1,12 +1,19 @@
 import { getConfiguredCawChainId, getConfiguredChain } from "@/lib/domain/constants";
-import { Configuration, FaucetApi, PactsApi, TransactionsApi, WalletsApi } from "@cobo/agentic-wallet";
+import {
+  Configuration,
+  FaucetApi,
+  PactsApi,
+  TransactionRecordsApi,
+  TransactionsApi,
+  WalletsApi
+} from "@cobo/agentic-wallet";
 import { encodeFunctionData } from "viem";
-import { resolveCawRuntimeConfig } from "@/lib/caw/runtime-config-store";
 
 type PactSubmitSpec = NonNullable<Parameters<PactsApi["submitPact"]>[0]["spec"]>;
 
 export type CreatePactInput = {
   userId: string;
+  walletId?: string;
   walletAddress: string;
   contractAddress?: string;
   usdcAddress: string;
@@ -23,6 +30,7 @@ export type CreatePactInput = {
 
 export type ExecuteCreditsPurchaseInput = {
   userId: string;
+  walletId?: string;
   walletAddress: string;
   pactId: string;
   pactApiKey?: string;
@@ -36,6 +44,7 @@ export type ExecuteCreditsPurchaseInput = {
 
 export type ExecuteUsdcApprovalInput = {
   userId: string;
+  walletId?: string;
   walletAddress: string;
   pactId: string;
   pactApiKey?: string;
@@ -50,35 +59,37 @@ export type CawPactStatus = {
   pactApiKey?: string;
 };
 
-export type CawPairingUpstreamStatus =
-  | "generated"
-  | "paired"
-  | "expired"
-  | "not_found";
-
-export type CawPairingStatusResult = {
-  /** Upstream SDK token_status: generated/paired/expired/not_found. */
-  upstreamStatus: CawPairingUpstreamStatus;
-  /** Pairing token echoed from upstream when valid (8-digit code). */
-  token?: string;
+export type CawTransactionRecord = {
+  id: string;
+  walletId: string;
+  pactId?: string;
+  type: string;
+  requestType?: string;
+  chainId: string;
+  tokenId: string;
+  from: string;
+  to: string;
+  amount: string;
+  status: string;
+  statusCode?: number;
+  subStatus?: string;
+  txHash?: string;
+  requestId?: string;
+  description?: string;
+  createdAt: string;
+  updatedAt: string;
 };
 
 export type CawGateway = {
-  createPairingCode(input: { userId: string }): Promise<{
+  createPairingCode(input: { userId: string; walletId?: string }): Promise<{
     code: string;
     expiresAt: string;
     status: "generated";
   }>;
-  /**
-   * Query the upstream CAW service for the current wallet pair status.
-   * Maps the SDK's `token_status` (valid/expired/paired/completed/not_found)
-   * to the project's three-value `CawPairingSession.status` shape.
-   * Returns { upstreamStatus: "not_found" } when no pending claim exists.
-   */
-  getPairingStatus(): Promise<CawPairingStatusResult>;
   connectWallet(input: {
     userId: string;
-    walletAddress: string;
+    walletId?: string;
+    walletAddress?: string;
   }): Promise<{ connectionId: string; walletId?: string; walletAddress: string }>;
   createPact(input: CreatePactInput): Promise<{
     pactId: string;
@@ -101,6 +112,14 @@ export type CawGateway = {
     txHash: string;
     status: "submitted" | "confirmed";
   }>;
+  listTransactions(input: {
+    walletId?: string;
+    limit?: number;
+  }): Promise<CawTransactionRecord[]>;
+  getTransactionByRequestId(input: {
+    walletId?: string;
+    requestId: string;
+  }): Promise<CawTransactionRecord | undefined>;
 };
 
 export type CawRuntimeStatus = {
@@ -124,7 +143,7 @@ export type CawRuntimeStatus = {
 };
 
 class MockCawGateway implements CawGateway {
-  async createPairingCode(input: { userId: string }) {
+  async createPairingCode(input: { userId: string; walletId?: string }) {
     const seed = input.userId.replace(/[^a-z0-9]/gi, "").slice(-5).toUpperCase() || "DEMO1";
     return {
       code: `CAW-${seed}`,
@@ -133,17 +152,12 @@ class MockCawGateway implements CawGateway {
     };
   }
 
-  async getPairingStatus(): Promise<CawPairingStatusResult> {
-    // Mock mode always reports paired so the dashboard's walletPaired gate
-    // stays open during offline development. There is no real upstream.
-    return { upstreamStatus: "paired" };
-  }
-
-  async connectWallet(input: { userId: string; walletAddress: string }) {
+  async connectWallet(input: { userId: string; walletId?: string; walletAddress?: string }) {
+    const walletId = input.walletId || `mock_wallet_${input.userId}`;
     return {
       connectionId: `mock_conn_${input.userId}`,
-      walletId: `mock_wallet_${input.userId}`,
-      walletAddress: input.walletAddress
+      walletId,
+      walletAddress: input.walletAddress || `0x${input.userId.replace(/[^a-f0-9]/gi, "").padEnd(40, "0").slice(0, 40)}`
     };
   }
 
@@ -186,12 +200,20 @@ class MockCawGateway implements CawGateway {
       status: "confirmed" as const
     };
   }
+
+  async listTransactions() {
+    return [];
+  }
+
+  async getTransactionByRequestId() {
+    return undefined;
+  }
 }
 
 class HttpCawGateway implements CawGateway {
   private readonly baseUrl: string;
   private readonly apiKey: string;
-  private readonly walletId: string;
+  private readonly defaultWalletId?: string;
 
   constructor() {
     this.baseUrl = requiredEnvAlias(["AGENT_WALLET_API_URL", "CAW_API_BASE_URL"]).replace(
@@ -199,13 +221,14 @@ class HttpCawGateway implements CawGateway {
       ""
     );
     this.apiKey = requiredEnvAlias(["AGENT_WALLET_API_KEY", "CAW_API_KEY"]);
-    this.walletId = requiredEnvAlias(["AGENT_WALLET_WALLET_ID", "CAW_WALLET_ID"]);
+    this.defaultWalletId = process.env.AGENT_WALLET_WALLET_ID || process.env.CAW_WALLET_ID;
   }
 
-  async createPairingCode() {
+  async createPairingCode(input: { userId: string; walletId?: string }) {
+    const walletId = this.resolveWalletId(input.walletId);
     const result = (
       await this.walletsApi().initiateWalletPair({
-        wallet_id: this.walletId
+        wallet_id: walletId
       })
     ).data.result;
 
@@ -216,57 +239,29 @@ class HttpCawGateway implements CawGateway {
     };
   }
 
-  async getPairingStatus(): Promise<CawPairingStatusResult> {
-    // Mirrors the existing call inside getCawRuntimeStatus() but returns a
-    // minimal shape (just the token_status + token) suitable for the
-    // pair-complete polling endpoint. SDK errors here are non-fatal: the
-    // dashboard falls back to "not_found" and leaves the local row alone.
-    try {
-      const response = await this.walletsApi().getPairInfoByWallet(this.walletId);
-      const info = response.data.result;
-      const rawStatus = info?.token_status;
-      const upstreamStatus: CawPairingUpstreamStatus =
-        rawStatus === "valid"
-          ? "generated"
-          : rawStatus === "paired" || rawStatus === "completed"
-            ? "paired"
-            : rawStatus === "expired"
-              ? "expired"
-              : "not_found";
-      return {
-        upstreamStatus,
-        token: info?.token
-      };
-    } catch {
-      return { upstreamStatus: "not_found" };
-    }
-  }
-
-  async connectWallet(input: { userId: string; walletAddress: string }) {
-    const addresses = (await this.walletsApi().listWalletAddresses(this.walletId)).data.result;
-    const addressList = Array.isArray(addresses) ? addresses : [];
-    // Prefer EVM address (0x...) over Solana
-    const evmAddress = addressList.find((a: unknown) =>
-      stringField(a as Record<string, unknown>, "address", "").startsWith("0x")
-    );
-    const firstAddress = evmAddress ?? addressList[0];
+  async connectWallet(input: { userId: string; walletId?: string; walletAddress?: string }) {
+    const walletId = this.resolveWalletId(input.walletId);
+    const addresses = (await this.walletsApi().listWalletAddresses(walletId)).data.result;
+    const firstAddress = Array.isArray(addresses) ? addresses[0] : undefined;
     const source = (firstAddress ?? {}) as Record<string, unknown>;
 
     return {
-      connectionId: this.walletId,
-      walletId: this.walletId,
+      connectionId: walletId,
+      walletId,
       walletAddress:
         stringField(source, "address", "") ||
         stringField(source, "addr", "") ||
         process.env.CAW_WALLET_ADDRESS ||
-        input.walletAddress
+        input.walletAddress ||
+        ""
     };
   }
 
   async createPact(input: CreatePactInput) {
+    const walletId = this.resolveWalletId(input.walletId);
     requiredInput(input.contractAddress, "PAYMENT_CONTRACT_ADDRESS");
     const response = await this.pactsApi().submitPact({
-      wallet_id: this.walletId,
+      wallet_id: walletId,
       name: "Agent credits auto top-up",
       intent: input.pactIntent,
       original_intent: input.originalIntent,
@@ -311,6 +306,7 @@ class HttpCawGateway implements CawGateway {
   }
 
   async executeCreditsPurchase(input: ExecuteCreditsPurchaseInput) {
+    const walletId = this.resolveWalletId(input.walletId);
     const pactApiKey = input.pactApiKey || process.env.CAW_PACT_API_KEY;
     if (!pactApiKey) {
       throw new Error(
@@ -341,7 +337,7 @@ class HttpCawGateway implements CawGateway {
     });
 
     const result = (
-      await this.transactionsApi(pactApiKey).contractCall(this.walletId, {
+      await this.transactionsApi(pactApiKey).contractCall(walletId, {
         chain_id: getConfiguredCawChainId(),
         src_addr: input.walletAddress,
         contract_addr: requiredInput(input.paymentContractAddress, "PAYMENT_CONTRACT_ADDRESS"),
@@ -360,6 +356,7 @@ class HttpCawGateway implements CawGateway {
   }
 
   async executeUsdcApproval(input: ExecuteUsdcApprovalInput) {
+    const walletId = this.resolveWalletId(input.walletId);
     const pactApiKey = input.pactApiKey || process.env.CAW_PACT_API_KEY;
     if (!pactApiKey) {
       throw new Error(
@@ -388,7 +385,7 @@ class HttpCawGateway implements CawGateway {
     });
 
     const result = (
-      await this.transactionsApi(pactApiKey).contractCall(this.walletId, {
+      await this.transactionsApi(pactApiKey).contractCall(walletId, {
         chain_id: getConfiguredCawChainId(),
         src_addr: input.walletAddress,
         contract_addr: input.usdcAddress,
@@ -403,6 +400,42 @@ class HttpCawGateway implements CawGateway {
       txHash: result.transaction_hash ?? result.id ?? "",
       status: result.status >= 900 ? ("confirmed" as const) : ("submitted" as const)
     };
+  }
+
+  async listTransactions(input: { walletId?: string; limit?: number }) {
+    const walletId = this.resolveWalletId(input.walletId);
+    const response = await this.transactionRecordsApi().listUserTransactions(
+      walletId,
+      undefined,
+      undefined,
+      undefined,
+      clampLimit(input.limit),
+      undefined,
+      undefined,
+      undefined,
+      getConfiguredCawChainId(),
+      undefined,
+      true
+    );
+
+    return response.data.result.map(mapCawTransactionRecord);
+  }
+
+  async getTransactionByRequestId(input: { walletId?: string; requestId: string }) {
+    const walletId = this.resolveWalletId(input.walletId);
+    try {
+      const response = await this.transactionRecordsApi().getUserTransactionByRequestId(
+        walletId,
+        input.requestId,
+        true
+      );
+      return mapCawTransactionRecord(response.data.result);
+    } catch (error) {
+      if (isHttpStatus(error, 404)) {
+        return undefined;
+      }
+      throw error;
+    }
   }
 
   private ownerConfig() {
@@ -425,31 +458,98 @@ class HttpCawGateway implements CawGateway {
     return new TransactionsApi(this.pactConfig(pactApiKey));
   }
 
+  private transactionRecordsApi() {
+    return new TransactionRecordsApi(this.ownerConfig());
+  }
+
   private faucetApi() {
     return new FaucetApi(this.ownerConfig());
   }
+
+  private resolveWalletId(walletId?: string) {
+    const resolved = walletId || this.defaultWalletId;
+    if (!resolved) {
+      throw new Error("CAW wallet id is required. Bind a CAW Wallet UUID to this user first.");
+    }
+    return resolved;
+  }
+}
+
+function clampLimit(limit: number | undefined) {
+  if (!limit || !Number.isFinite(limit)) {
+    return 50;
+  }
+  return Math.min(200, Math.max(1, Math.floor(limit)));
+}
+
+function mapCawTransactionRecord(record: {
+  id: string;
+  wallet_id: string;
+  pact_id?: string;
+  type: unknown;
+  request_type?: unknown;
+  chain_id: string;
+  token_id: string;
+  src_address: string;
+  dst_address: string;
+  amount: string;
+  status: number;
+  status_display?: string;
+  sub_status?: string;
+  transaction_hash?: string;
+  request_id?: string;
+  description?: string;
+  created_at: string;
+  updated_at: string;
+  ext_transactions?: Array<{ transaction_hash?: string }>;
+}): CawTransactionRecord {
+  const extTxHash = record.ext_transactions?.find((tx) => tx.transaction_hash)?.transaction_hash;
+  return {
+    id: record.id,
+    walletId: record.wallet_id,
+    pactId: record.pact_id,
+    type: String(record.type),
+    requestType: record.request_type ? String(record.request_type) : undefined,
+    chainId: record.chain_id,
+    tokenId: record.token_id,
+    from: record.src_address,
+    to: record.dst_address,
+    amount: record.amount,
+    status: record.status_display ?? String(record.status),
+    statusCode: record.status,
+    subStatus: record.sub_status,
+    txHash: record.transaction_hash || extTxHash,
+    requestId: record.request_id,
+    description: record.description,
+    createdAt: record.created_at,
+    updatedAt: record.updated_at
+  };
+}
+
+function isHttpStatus(error: unknown, status: number) {
+  if (!isRecord(error) || !isRecord(error.response)) {
+    return false;
+  }
+  return error.response.status === status;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
 }
 
 export function createCawGateway(): CawGateway {
   return getConfiguredCawMode() === "mock" ? new MockCawGateway() : new HttpCawGateway();
 }
 
-export async function getCawRuntimeStatus(): Promise<CawRuntimeStatus> {
+export async function getCawRuntimeStatus(input: {
+  walletId?: string;
+  useDefaultWallet?: boolean;
+} = {}): Promise<CawRuntimeStatus> {
   const mode = getConfiguredCawMode();
-  // Runtime config (dashboard-set) takes precedence over .env so users can
-  // bind a CAW wallet from the UI without editing .env.
-  const resolved = resolveCawRuntimeConfig();
-  const apiUrl = resolved.apiUrl;
-  // API key source order: .env first, then the process.env override set
-  // by /api/wallet/caw/runtime-config?autobind=1 (which reads the local
-  // caw CLI profile from disk and seeds AGENT_WALLET_API_KEY in-process
-  // so subsequent status / pact / pair calls can use it).
-  const apiKey =
-    process.env.AGENT_WALLET_API_KEY ||
-    process.env.CAW_API_KEY ||
-    process.env.__RUNTIME_CAW_API_KEY ||
-    "";
-  const walletId = resolved.walletUuid;
+  const apiUrl = process.env.AGENT_WALLET_API_URL || process.env.CAW_API_BASE_URL || "";
+  const apiKey = process.env.AGENT_WALLET_API_KEY || process.env.CAW_API_KEY || "";
+  const defaultWalletId = process.env.AGENT_WALLET_WALLET_ID || process.env.CAW_WALLET_ID || "";
+  const walletId = input.walletId || (input.useDefaultWallet === false ? "" : defaultWalletId);
   const chain = getConfiguredChain();
   const chainId = getConfiguredCawChainId();
   const baseStatus: CawRuntimeStatus = {
@@ -458,7 +558,6 @@ export async function getCawRuntimeStatus(): Promise<CawRuntimeStatus> {
     apiConfigured: Boolean(apiUrl && apiKey),
     walletConfigured: Boolean(walletId),
     walletId: walletId || undefined,
-    walletName: resolved.walletName || undefined,
     walletPaired: mode === "mock",
     chainId,
     chainName: chain.name,
@@ -473,7 +572,7 @@ export async function getCawRuntimeStatus(): Promise<CawRuntimeStatus> {
   if (mode === "mock") {
     return {
       ...baseStatus,
-      walletName: baseStatus.walletName || "Mock CAW wallet",
+      walletName: "Mock CAW wallet",
       walletStatus: "mock_active",
       walletAddress: process.env.CAW_WALLET_ADDRESS || undefined
     };

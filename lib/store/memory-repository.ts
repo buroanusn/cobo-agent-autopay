@@ -1,43 +1,16 @@
-// createHash("sha256") rewritten with Web Crypto. The original
-// `node:crypto` import triggered webpack's UnhandledSchemeError when
-// this module was bundled for the Next.js server. SHA-256 is available
-// in Node 19+ via globalThis.crypto.subtle.
-async function sha256Hex(input: string): Promise<string> {
-  const enc = new TextEncoder();
-  const hash = await globalThis.crypto.subtle.digest("SHA-256", enc.encode(input));
-  return Array.from(new Uint8Array(hash))
-    .map((b) => b.toString(16).padStart(2, "0"))
-    .join("");
-}
-
-// Cache of sync-call sites that were waiting for the same input string.
-// We precompute a stable placeholder; the actual computation is async and
-// happens in a microtask, so callers that immediately read the result see
-// the placeholder. This module is only used for non-cryptographic ID
-// generation (synthetic chain-event ids from orderId), so determinism is
-// not required. To preserve the prior behaviour, we expose a synchronous
-// `txHash` that returns a FNV-1a 64-bit hex (good enough for the
-// dashboard "tx hash" display) and an async `txHashAsync` for callers
-// that need the real SHA-256.
-function fnv1a64Hex(input: string): string {
-  let hash = 0xcbf29ce484222325n;
-  const prime = 0x100000001b3n;
-  for (let i = 0; i < input.length; i++) {
-    hash ^= BigInt(input.charCodeAt(i));
-    hash = (hash * prime) & 0xffffffffffffffffn;
-  }
-  return `0x${hash.toString(16).padStart(16, "0")}`;
-}
+import { createHash } from "node:crypto";
 import { CREDITS_PER_USDC, getConfiguredChain } from "@/lib/domain/constants";
 import type {
   AgentUsageEvent,
   CawAuthorization,
+  CawAuthorizationPurpose,
   CreditAccount,
   DashboardSnapshot,
   LedgerEntry,
   TopupOrder,
   User,
-  CawPairingSession
+  CawPairingSession,
+  CawWalletOnboardingSession
 } from "@/lib/domain/types";
 import {
   createId,
@@ -54,7 +27,8 @@ import type { ChainEventRecord, CreditRepository } from "@/lib/store/repository"
 const pendingTopupStatuses: TopupOrder["status"][] = [
   "pending_policy",
   "caw_submitted",
-  "chain_pending"
+  "chain_pending",
+  "pending_approval"
 ];
 
 export const memoryRepository: CreditRepository = {
@@ -67,6 +41,15 @@ export const memoryRepository: CreditRepository = {
     const normalizedEmail = normalizeEmail(email);
     const existing = [...db.users.values()].find((user) => user.email === normalizedEmail);
     return existing ?? createUserWithDefaults(normalizedEmail);
+  },
+  async findUserByCoboId(coboId: string): Promise<User | undefined> {
+    const normalizedCoboId = coboId.toLowerCase();
+    return [...db.users.values()].find(
+      (user) => user.coboId?.toLowerCase() === normalizedCoboId
+    );
+  },
+  async findUserByCawWalletId(walletId: string): Promise<User | undefined> {
+    return [...db.users.values()].find((user) => user.cawWalletId === walletId);
   },
   async findUserByCawWalletAddress(walletAddress: string): Promise<User | undefined> {
     const normalizedWallet = walletAddress.toLowerCase();
@@ -88,8 +71,11 @@ export const memoryRepository: CreditRepository = {
     db.users.set(user.id, user);
     return user;
   },
-  async getActiveAuthorization(userId: string): Promise<CawAuthorization | undefined> {
-    return getActiveAuthorization(userId);
+  async getActiveAuthorization(
+    userId: string,
+    purpose?: CawAuthorizationPurpose
+  ): Promise<CawAuthorization | undefined> {
+    return getActiveAuthorization(userId, purpose);
   },
   async createAuthorization(authorization: CawAuthorization): Promise<CawAuthorization> {
     db.cawAuthorizations.set(authorization.id, authorization);
@@ -104,6 +90,17 @@ export const memoryRepository: CreditRepository = {
     session: CawPairingSession
   ): Promise<CawPairingSession> {
     db.pairingSessions.set(userId, session);
+    return session;
+  },
+  async getCawOnboardingSession(
+    userId: string
+  ): Promise<CawWalletOnboardingSession | undefined> {
+    return db.cawOnboardingSessions.get(userId);
+  },
+  async upsertCawOnboardingSession(
+    session: CawWalletOnboardingSession
+  ): Promise<CawWalletOnboardingSession> {
+    db.cawOnboardingSessions.set(session.userId, session);
     return session;
   },
   async createUsageEvent(
@@ -130,6 +127,11 @@ export const memoryRepository: CreditRepository = {
     return [...db.topupOrders.values()].find(
       (order) => order.userId === userId && pendingTopupStatuses.includes(order.status)
     );
+  },
+  async listPendingTopupOrders(userId: string): Promise<TopupOrder[]> {
+    return [...db.topupOrders.values()]
+      .filter((order) => order.userId === userId && pendingTopupStatuses.includes(order.status))
+      .sort((left, right) => left.createdAt.localeCompare(right.createdAt));
   },
   async createTopupOrder(
     input: Omit<TopupOrder, "id" | "orderId" | "onchainOrderId" | "createdAt" | "updatedAt">
@@ -160,17 +162,16 @@ export const memoryRepository: CreditRepository = {
         candidate.orderId === input.orderId || candidate.onchainOrderId === input.onchainOrderId
     );
   },
-  async listStaleTopupOrders(input: {
-    cutoffIso: string;
-    statuses: TopupOrder["status"][];
-  }): Promise<TopupOrder[]> {
-    const cutoffMs = Date.parse(input.cutoffIso);
-    return [...db.topupOrders.values()]
-      .filter(
-        (order) =>
-          input.statuses.includes(order.status) && Date.parse(order.createdAt) < cutoffMs
-      )
-      .sort((a, b) => Date.parse(a.createdAt) - Date.parse(b.createdAt));
+  async findTopupOrderByTxHash(input: {
+    userId: string;
+    txHash: string;
+  }): Promise<TopupOrder | undefined> {
+    const normalizedTxHash = input.txHash.toLowerCase();
+    return [...db.topupOrders.values()].find(
+      (candidate) =>
+        candidate.userId === input.userId &&
+        candidate.txHash?.toLowerCase() === normalizedTxHash
+    );
   },
   async hasChainEvent(eventId: string): Promise<boolean> {
     return db.chainEventsSeen.has(eventId);
@@ -185,7 +186,7 @@ export const memoryRepository: CreditRepository = {
 };
 
 function orderIdToBytes32(orderId: string) {
-  return fnv1a64Hex(orderId);
+  return `0x${createHash("sha256").update(orderId).digest("hex")}`;
 }
 
 export const memorySnapshotNetwork = {

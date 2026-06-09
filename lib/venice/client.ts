@@ -1,31 +1,22 @@
-// Low-level HTTP client for Venice APIs.
-// x402 inference flow uses caw fetch (see lib/venice/topup.ts),
-// this client handles the Bearer-key paths:
-//   - GET  /api/v1/billing/balance  (account balance, dual-currency DIEM+USD)
-//   - GET  /x402/balance/{walletAddress}  (x402 credit balance for a wallet)
-//   - POST /api/v1/chat/completions  (inference, bearer-authenticated)
-//   - GET  /api/v1/models  (list available models)
-
-import { getVeniceApiKey, getVeniceBaseUrl } from "@/lib/config/store";
-
-export type VeniceBearerRequest = {
+export type VeniceRequestInput = {
   method?: "GET" | "POST";
   path: string;
   body?: unknown;
-  query?: Record<string, string | number | boolean | undefined>;
-  // If true, do not throw on 4xx/5xx; return full response
+  apiKey?: string;
   passthrough?: boolean;
 };
 
-export type VeniceBearerResponse = {
+export type VeniceResponse = {
   status: number;
   headers: Headers;
   body: unknown;
+  text: string;
 };
 
 export class VeniceApiError extends Error {
   readonly status: number;
   readonly body: unknown;
+
   constructor(message: string, status: number, body: unknown) {
     super(message);
     this.status = status;
@@ -33,160 +24,107 @@ export class VeniceApiError extends Error {
   }
 }
 
-function buildUrl(path: string, query?: VeniceBearerRequest["query"]) {
-  const base = getVeniceBaseUrl().replace(/\/+$/, "");
-  const cleanPath = path.startsWith("/") ? path : `/${path}`;
-  const url = new URL(`${base}${cleanPath}`);
-  if (query) {
-    for (const [k, v] of Object.entries(query)) {
-      if (v !== undefined && v !== null) {
-        url.searchParams.set(k, String(v));
-      }
-    }
-  }
-  return url.toString();
+export function getVeniceBaseUrl() {
+  return (process.env.VENICE_BASE_URL || "https://api.venice.ai").replace(/\/+$/, "");
 }
 
-export async function veniceRequest(req: VeniceBearerRequest): Promise<VeniceBearerResponse> {
-  const apiKey = getVeniceApiKey();
-  if (!apiKey) {
-    throw new Error("Venice API key is not configured. Set it from the dashboard.");
+export function getVeniceApiKey() {
+  return process.env.VENICE_API_KEY || "";
+}
+
+export function getVeniceModel() {
+  return process.env.VENICE_INFERENCE_MODEL || "llama-3.3-70b";
+}
+
+export async function veniceRequest(input: VeniceRequestInput): Promise<VeniceResponse> {
+  const headers: Record<string, string> = {
+    Accept: "application/json"
+  };
+  const apiKey = input.apiKey ?? getVeniceApiKey();
+  if (apiKey) {
+    headers.Authorization = `Bearer ${apiKey}`;
+  }
+  if (input.body !== undefined) {
+    headers["Content-Type"] = "application/json";
   }
 
-  const url = buildUrl(req.path, req.query);
-  const init: RequestInit = {
-    method: req.method ?? "GET",
-    headers: {
-      Authorization: `Bearer ${apiKey}`,
-      "Content-Type": "application/json",
-      Accept: "application/json"
-    },
+  const response = await fetch(`${getVeniceBaseUrl()}${normalizePath(input.path)}`, {
+    method: input.method ?? "GET",
+    headers,
+    body: input.body === undefined ? undefined : JSON.stringify(input.body),
     cache: "no-store"
-  };
-  if (req.body !== undefined) {
-    init.body = typeof req.body === "string" ? req.body : JSON.stringify(req.body);
+  });
+  const text = await response.text();
+  const body = parseJsonOrText(text);
+
+  if (!response.ok && !input.passthrough) {
+    throw new VeniceApiError(extractVeniceMessage(body, response), response.status, body);
   }
 
-  const res = await fetch(url, init);
-  const text = await res.text();
-  let body: unknown = text;
-  if (text) {
-    try {
-      body = JSON.parse(text);
-    } catch {
-      // Keep as text if not JSON
-    }
-  }
-
-  if (!res.ok && !req.passthrough) {
-    const message =
-      (body && typeof body === "object" && "error" in body && (body as { error?: string }).error) ||
-      `Venice API ${res.status} ${res.statusText}`;
-    throw new VeniceApiError(typeof message === "string" ? message : String(message), res.status, body);
-  }
-
-  return { status: res.status, headers: res.headers, body };
-}
-
-export type VeniceBillingBalance = {
-  canConsume: boolean;
-  consumptionCurrency: "USD" | "DIEM" | "VCU" | "BUNDLED_CREDITS" | null;
-  balances: {
-    diem: number;
-    usd: number;
-  };
-  diemEpochAllocation: number;
-};
-
-export type VeniceX402Balance = {
-  // Schema inferred from docs (we will normalize on read; server may return slightly different shape)
-  balance?: number;
-  amount?: number;
-  canConsume?: boolean;
-  currency?: string;
-  raw: unknown;
-};
-
-export async function fetchVeniceBillingBalance(): Promise<VeniceBillingBalance> {
-  const res = await veniceRequest({ path: "/api/v1/billing/balance" });
-  const body = res.body as {
-    canConsume?: boolean;
-    consumptionCurrency?: VeniceBillingBalance["consumptionCurrency"];
-    balances?: { diem?: number; usd?: number };
-    diemEpochAllocation?: number;
-  };
   return {
-    canConsume: Boolean(body?.canConsume),
-    consumptionCurrency: body?.consumptionCurrency ?? null,
-    balances: {
-      diem: Number(body?.balances?.diem ?? 0),
-      usd: Number(body?.balances?.usd ?? 0)
-    },
-    diemEpochAllocation: Number(body?.diemEpochAllocation ?? 0)
+    status: response.status,
+    headers: response.headers,
+    body,
+    text
   };
 }
 
-export async function fetchVeniceX402Balance(walletAddress: string): Promise<VeniceX402Balance> {
-  // x402 balance requires Sign-in-with-x (SIWE) auth, but we'll attempt the GET
-  // and surface the 401/402 response so the dashboard can prompt the user to use
-  // the x402 top-up flow (caw fetch) instead.
-  try {
-    const res = await veniceRequest({
-      path: `/x402/balance/${walletAddress}`,
-      passthrough: true
-    });
-    return { ...((res.body as object) ?? {}), raw: res.body };
-  } catch (error) {
-    if (error instanceof VeniceApiError) {
-      return { raw: error.body };
-    }
-    throw error;
-  }
+export async function fetchVeniceBillingBalance() {
+  const response = await veniceRequest({ path: "/api/v1/billing/balance" });
+  return response.body;
 }
 
-export type VeniceChatMessage = {
-  role: "system" | "user" | "assistant";
-  content: string;
-};
-
-export type VeniceChatRequest = {
+export async function runVeniceChatCompletion(input: {
+  prompt: string;
+  systemPrompt?: string;
   model?: string;
-  messages: VeniceChatMessage[];
-  temperature?: number;
-  max_tokens?: number;
-  stream?: false;
-};
+}) {
+  const messages = [];
+  if (input.systemPrompt?.trim()) {
+    messages.push({ role: "system", content: input.systemPrompt.trim() });
+  }
+  messages.push({ role: "user", content: input.prompt.trim() });
 
-export type VeniceChatResponse = {
-  id: string;
-  object: string;
-  created: number;
-  model: string;
-  choices: Array<{
-    index: number;
-    message: { role: "assistant"; content: string };
-    finish_reason: string;
-  }>;
-  usage?: {
-    prompt_tokens?: number;
-    completion_tokens?: number;
-    total_tokens?: number;
-  };
-};
-
-export async function veniceChatCompletion(
-  input: VeniceChatRequest
-): Promise<VeniceChatResponse> {
-  const res = await veniceRequest({
+  const response = await veniceRequest({
     method: "POST",
     path: "/api/v1/chat/completions",
     body: {
-      model: input.model,
-      messages: input.messages,
-      temperature: input.temperature ?? 0.7,
-      max_tokens: input.max_tokens ?? 512,
+      model: input.model?.trim() || getVeniceModel(),
+      messages,
       stream: false
     }
   });
-  return res.body as VeniceChatResponse;
+  return response.body;
+}
+
+function normalizePath(path: string) {
+  return path.startsWith("/") ? path : `/${path}`;
+}
+
+function parseJsonOrText(text: string) {
+  if (!text) {
+    return null;
+  }
+  try {
+    return JSON.parse(text) as unknown;
+  } catch {
+    return text;
+  }
+}
+
+function extractVeniceMessage(body: unknown, response: Response) {
+  if (typeof body === "string" && body) {
+    return body.slice(0, 300);
+  }
+  if (isRecord(body)) {
+    const message = body.error || body.message || body.detail;
+    if (typeof message === "string") {
+      return message;
+    }
+  }
+  return `Venice API ${response.status} ${response.statusText}`;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
 }

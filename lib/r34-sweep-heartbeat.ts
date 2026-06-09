@@ -31,10 +31,21 @@ import "server-only";
 
 const DEFAULT_INTERVAL_MS = 5 * 60 * 1000; // 5 min
 const MIN_INTERVAL_MS = 30 * 1000; // 30s sanity floor
-const FIRST_TICK_DELAY_MS = 5_000; // 启动 5s 后跑首轮 (避免跟 instrumentation 并发卡 dev server)
+const FIRST_TICK_DELAY_MS = 5_000;
+const BALANCE_CHECK_INTERVAL_MS = 60_000; // 60s
+
+// ── Venice balance ────────────────────────────────────────────────────────
+const VENICE_X402_WALLET = "0xaa56c463fd074dbb4f7d02f6902a8ea7841aa67d";
+
+function resolveVeniceBalanceThreshold(): number {
+  return Number(
+    process.env.VENICE_BALANCE_THRESHOLD ?? 5
+  );
+}
 
 type R34SweepHeartbeatState = {
   intervalHandle: ReturnType<typeof setInterval> | undefined;
+  balanceHandle: ReturnType<typeof setInterval> | undefined;
   firstTickTimer: ReturnType<typeof setTimeout> | undefined;
   lastRunAt: string | undefined;
   lastError: string | undefined;
@@ -43,6 +54,10 @@ type R34SweepHeartbeatState = {
   lastCutoffIso: string | undefined;
   consecutiveFailures: number;
   startedAt: string | undefined;
+  // Venice balance polling
+  veniceBalanceUsd: number;
+  veniceBalanceThreshold: number;
+  lastBalanceCheckAt: string | undefined;
 };
 
 declare global {
@@ -54,6 +69,7 @@ function getState(): R34SweepHeartbeatState {
   if (!globalThis.__R34_SWEEP_HEARTBEAT_STATE__) {
     globalThis.__R34_SWEEP_HEARTBEAT_STATE__ = {
       intervalHandle: undefined,
+      balanceHandle: undefined,
       firstTickTimer: undefined,
       lastRunAt: undefined,
       lastError: undefined,
@@ -61,7 +77,10 @@ function getState(): R34SweepHeartbeatState {
       lastFailedCount: undefined,
       lastCutoffIso: undefined,
       consecutiveFailures: 0,
-      startedAt: undefined
+      startedAt: undefined,
+      veniceBalanceUsd: 0,
+      veniceBalanceThreshold: resolveVeniceBalanceThreshold(),
+      lastBalanceCheckAt: undefined
     };
   }
   return globalThis.__R34_SWEEP_HEARTBEAT_STATE__;
@@ -84,8 +103,10 @@ type R34SweepTickResult = {
 async function runR34SweepTick(): Promise<R34SweepTickResult> {
   // ⚠️ Dynamic import — 切 chunk, 避开静态 module graph.
   const services = await import("@/lib/domain/services");
+  const state = getState();
   try {
     const result = await services.expireStaleTopupOrders({});
+
     return {
       ok: true,
       expiredCount: result.expiredCount,
@@ -97,6 +118,57 @@ async function runR34SweepTick(): Promise<R34SweepTickResult> {
       ok: false,
       error: caught instanceof Error ? caught.message : "unknown_error"
     };
+  }
+}
+
+// ── Venice balance polling (60s independent timer) ─────────────────────
+async function checkVeniceBalance(): Promise<void> {
+  const state = getState();
+  state.veniceBalanceThreshold = resolveVeniceBalanceThreshold();
+  try {
+    const services = await import("@/lib/domain/services");
+    // Mock mode: VENICE_MOCK_BALANCE overrides real balance check
+    const mockBalanceStr = process.env.VENICE_MOCK_BALANCE;
+    let usdBalance: number;
+    if (mockBalanceStr !== undefined) {
+      usdBalance = Number(mockBalanceStr);
+      console.log(`[venice-balance] MOCK balance=${usdBalance}, threshold=${state.veniceBalanceThreshold}`);
+    } else {
+      const balance = await services.refreshVeniceBalance?.({ walletAddress: VENICE_X402_WALLET });
+      usdBalance = balance?.usdBalance ?? 0;
+    }
+    state.veniceBalanceUsd = usdBalance;
+    state.lastBalanceCheckAt = new Date().toISOString();
+
+    // Below threshold → auto top-up if lock is idle
+    if (usdBalance < state.veniceBalanceThreshold) {
+      const topup = await import("@/lib/venice/topup");
+      const lockState = topup.getPaymentLockState();
+      if (lockState === "idle") {
+        const repo = await import("@/lib/store").then(m => m.getCreditRepository());
+        const users = await repo.listUsers?.() ?? [];
+        for (const user of users) {
+          if (!user.cawWalletAddress) continue;
+          try {
+            const auth = await repo.getActiveAuthorization(user.userId);
+            if (!auth || auth.status !== "active") continue;
+            const pactId = auth.pactId;
+            await topup.runVeniceX402Topup({
+              userId: user.userId,
+              walletAddress: user.cawWalletAddress,
+              pactId,
+              usdAmount: state.veniceBalanceThreshold
+            });
+          } catch (e) {
+            console.warn("[venice-balance] Auto top-up failed for user:", user.userId, e);
+          }
+        }
+      } else {
+        console.log(`[venice-balance] Balance below threshold but lock busy (${lockState}), skipping auto top-up`);
+      }
+    }
+  } catch (balanceErr) {
+    console.warn("[venice-balance] balance check failed:", balanceErr);
   }
 }
 
@@ -140,6 +212,13 @@ export function startR34SweepHeartbeat(): void {
   console.log(
     `[r34-sweep-heartbeat] started, interval=${intervalMs}ms, first-tick-in=${FIRST_TICK_DELAY_MS}ms`
   );
+  // Start independent balance checker (60s)
+  if (!state.balanceHandle) {
+    void checkVeniceBalance(); // immediate first check
+    state.balanceHandle = setInterval(() => {
+      void checkVeniceBalance();
+    }, BALANCE_CHECK_INTERVAL_MS);
+  }
 }
 
 export function stopR34SweepHeartbeat(): void {
@@ -153,6 +232,10 @@ export function stopR34SweepHeartbeat(): void {
     state.intervalHandle = undefined;
     // eslint-disable-next-line no-console
     console.log("[r34-sweep-heartbeat] stopped");
+  }
+  if (state.balanceHandle) {
+    clearInterval(state.balanceHandle);
+    state.balanceHandle = undefined;
   }
 }
 
@@ -173,6 +256,9 @@ export type R34SweepHeartbeatStatus = {
   lastCutoffIso: string | undefined;
   consecutiveFailures: number;
   intervalMs: number;
+  veniceBalanceUsd: number;
+  veniceBalanceThreshold: number;
+  lastBalanceCheckAt: string | undefined;
 };
 
 export function getR34SweepHeartbeatStatus(): R34SweepHeartbeatStatus {
@@ -186,6 +272,9 @@ export function getR34SweepHeartbeatStatus(): R34SweepHeartbeatStatus {
     lastFailedCount: state.lastFailedCount,
     lastCutoffIso: state.lastCutoffIso,
     consecutiveFailures: state.consecutiveFailures,
-    intervalMs: resolveIntervalMs()
+    intervalMs: resolveIntervalMs(),
+    veniceBalanceUsd: state.veniceBalanceUsd,
+    veniceBalanceThreshold: state.veniceBalanceThreshold,
+    lastBalanceCheckAt: state.lastBalanceCheckAt
   };
 }

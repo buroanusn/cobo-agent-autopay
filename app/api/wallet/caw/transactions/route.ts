@@ -1,60 +1,23 @@
-import { NextResponse } from "next/server";
-import { execSync } from "child_process";
+import { requireCurrentUser } from "@/lib/auth/session";
+import { createCawGateway } from "@/lib/caw/gateway";
+import { errorJson, okJson } from "@/lib/http";
 
-// Use the user's actual HOME so caw CLI reads the real profile directory
-// (~/.cobo-agentic-wallet/profiles/...) where their CAW wallets live.
-// Previous value pointed at the "think" Hermes profile home which has a
-// different (empty) caw profile.
-const CAW_HOME = process.env.HOME || require("os").homedir();
+export const dynamic = "force-dynamic";
 
-export async function GET() {
+export async function GET(request: Request) {
   try {
-    const raw = execSync("caw tx list --limit 10", {
-      timeout: 15000,
-      encoding: "utf-8",
-      env: { ...process.env, HOME: CAW_HOME },
-    });
-    const data = JSON.parse(raw);
-    if (!data.success) {
-      return NextResponse.json({ error: "caw tx list failed" }, { status: 500 });
+    const user = await requireCurrentUser();
+    const walletId = user.cawWalletId || process.env.AGENT_WALLET_WALLET_ID || process.env.CAW_WALLET_ID;
+    if (!walletId) {
+      throw new Error("Bind a CAW Wallet UUID before reading CAW transactions.");
     }
 
-    const records = (data.result || []).map((tx: Record<string, unknown>) => {
-      const description = (tx.description as string) || "";
-      const requestId = (tx.request_id as string) || "";
-      const status = tx.status as string;
-      const subStatus = tx.sub_status as string;
+    const url = new URL(request.url);
+    const limit = Number(url.searchParams.get("limit") ?? 50);
+    const records = await createCawGateway().listTransactions({ walletId, limit });
 
-      let reason = "manual";
-      if (requestId.startsWith("x402-")) reason = "x402_auto";
-      else if (description.toLowerCase().includes("x402")) reason = "x402_auto";
-
-      if (status === "Rejected" && subStatus === "policy_denied") reason = "policy_denied";
-      else if (status === "Pending") reason = "pending";
-      else if (status === "Expired") reason = "expired";
-
-      return {
-        id: tx.id,
-        time: tx.created_at,
-        amount: tx.amount,
-        token: tx.token_id,
-        chain: tx.chain_id,
-        to: tx.dst_address,
-        from: tx.src_address,
-        status,
-        subStatus,
-        reason,
-        txHash: tx.transaction_hash || null,
-        description,
-        requestId,
-        fee: tx.fee?.estimated_fee_used || null,
-        pactId: tx.pact_id,
-      };
-    });
-
-    return NextResponse.json({ records });
-  } catch (e: unknown) {
-    const msg = e instanceof Error ? e.message : String(e);
-    return NextResponse.json({ error: msg }, { status: 500 });
+    return okJson({ records });
+  } catch (error) {
+    return errorJson(error);
   }
 }
