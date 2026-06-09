@@ -10,6 +10,16 @@ import {
 } from "@/lib/venice/client";
 import type { VeniceBalanceSnapshot } from "@/lib/venice/types";
 
+type BillingBalanceResponse = {
+  canConsume?: boolean;
+  consumptionCurrency?: VeniceBalanceSnapshot["consumptionCurrency"];
+  balances?: {
+    diem?: number;
+    usd?: number;
+  };
+  diemEpochAllocation?: number;
+};
+
 export async function refreshVeniceBalance(input: { walletAddress?: string } = {}): Promise<VeniceBalanceSnapshot> {
   const walletAddress = input.walletAddress;
 
@@ -23,22 +33,23 @@ export async function refreshVeniceBalance(input: { walletAddress?: string } = {
   let raw: unknown;
 
   try {
-    const billing = await fetchVeniceBillingBalance();
-    canConsume = billing.canConsume;
-    consumptionCurrency = billing.consumptionCurrency;
-    diemBalance = billing.balances.diem;
-    usdBalance = billing.balances.usd;
-    diemEpochAllocation = billing.diemEpochAllocation;
+    const billing = await fetchVeniceBillingBalance() as BillingBalanceResponse;
+    canConsume = Boolean(billing.canConsume);
+    consumptionCurrency = billing.consumptionCurrency ?? null;
+    diemBalance = Number(billing.balances?.diem ?? 0);
+    usdBalance = Number(billing.balances?.usd ?? 0);
+    diemEpochAllocation = Number(billing.diemEpochAllocation ?? 0);
     raw = billing;
   } catch (error) {
     if (error instanceof VeniceApiError && walletAddress) {
       // Fall back to x402 wallet path (still may 401 due to SIWE, but record attempt)
       source = "x402_wallet";
       const x402 = await fetchVeniceX402Balance(walletAddress);
+      const x402Body = x402.raw as { amount?: number; balance?: number; usdBalance?: number; canConsume?: boolean };
       raw = x402.raw;
       // Best-effort extraction; not strict
-      usdBalance = Number((x402 as { amount?: number }).amount ?? 0);
-      canConsume = Boolean((x402 as { canConsume?: boolean }).canConsume);
+      usdBalance = Number(x402Body.usdBalance ?? x402Body.balance ?? x402Body.amount ?? 0);
+      canConsume = Boolean(x402Body.canConsume);
     } else {
       throw error;
     }

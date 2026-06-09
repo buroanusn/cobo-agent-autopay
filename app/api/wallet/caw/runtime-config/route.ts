@@ -14,6 +14,7 @@
 import { NextResponse } from "next/server";
 import { readFileSync, existsSync, readdirSync } from "fs";
 import { join } from "path";
+import { requireCurrentUser } from "@/lib/auth/session";
 import {
   getCawRuntimeConfig,
   listCawRuntimeConfig,
@@ -34,7 +35,7 @@ type CawProfileCredentials = {
 // ~/.cobo-agentic-wallet/profiles/<agent_id>/credentials (file perms
 // 600, owner-only). This route is a leaf node.js route (no client
 // instrumentation chain) so it's safe to import `fs` and `path` here.
-function readCawProfileCredentials(): CawProfileCredentials | null {
+function readCawProfileCredentials(walletUuid?: string): CawProfileCredentials | null {
   const home = process.env.HOME || require("os").homedir();
   const profilesDir = join(home, ".cobo-agentic-wallet", "profiles");
   if (!existsSync(profilesDir)) return null;
@@ -76,13 +77,15 @@ function readCawProfileCredentials(): CawProfileCredentials | null {
       const apiKey = String(parsed.api_key ?? "");
       const apiUrl = String(parsed.api_url ?? "");
       const agentId = String(parsed.agent_id ?? "");
+      const profileWalletUuid = String(parsed.wallet_uuid ?? "");
       if (!apiKey || !apiUrl) continue;
+      if (walletUuid && profileWalletUuid !== walletUuid) continue;
       return {
         apiKey,
         apiUrl,
         agentId,
         walletName: String(parsed.wallet_name ?? "default"),
-        walletUuid: String(parsed.wallet_uuid ?? "")
+        walletUuid: profileWalletUuid
       };
     } catch {
       // Skip unparseable profile; keep scanning.
@@ -92,6 +95,7 @@ function readCawProfileCredentials(): CawProfileCredentials | null {
 }
 
 export async function GET(request: Request) {
+  await requireCurrentUser();
   const url = new URL(request.url);
   const autobind = url.searchParams.get("autobind") === "1";
 
@@ -148,6 +152,7 @@ export async function GET(request: Request) {
 }
 
 export async function POST(request: Request) {
+  await requireCurrentUser();
   let body: Record<string, unknown>;
   try {
     body = (await request.json()) as Record<string, unknown>;
@@ -185,7 +190,7 @@ export async function POST(request: Request) {
   // the bound wallet UUID.
   process.env.AGENT_WALLET_API_URL = updates.caw_api_url ?? "";
   process.env.AGENT_WALLET_WALLET_ID = walletUuid;
-  const matchedProfile = readCawProfileCredentials();
+  const matchedProfile = readCawProfileCredentials(walletUuid);
   if (matchedProfile) {
     process.env.AGENT_WALLET_API_KEY = matchedProfile.apiKey;
   }
@@ -203,6 +208,7 @@ export async function POST(request: Request) {
 }
 
 export async function DELETE() {
+  await requireCurrentUser();
   clearCawRuntimeConfig();
   return NextResponse.json({ ok: true, cleared: true });
 }

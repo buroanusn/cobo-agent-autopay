@@ -74,6 +74,17 @@ export async function fetchVeniceBillingBalance() {
   return response.body;
 }
 
+export async function fetchVeniceX402Balance(walletAddress: string) {
+  const response = await veniceRequest({
+    path: `/api/v1/x402/balance?address=${encodeURIComponent(walletAddress)}`,
+    passthrough: true
+  });
+  return {
+    status: response.status,
+    raw: response.body
+  };
+}
+
 export async function runVeniceChatCompletion(input: {
   prompt: string;
   systemPrompt?: string;

@@ -2,6 +2,7 @@
 // Read/write runtime config settings — in-memory for now, DB schema in later iteration.
 import { okJson, errorJson, readJson } from "@/lib/http";
 import { getR34SweepHeartbeatStatus } from "@/lib/r34-sweep-heartbeat";
+import { requireCurrentUser } from "@/lib/auth/session";
 
 export const dynamic = "force-dynamic";
 
@@ -19,6 +20,7 @@ function getSettings(): Record<string, unknown> {
 }
 
 export async function GET() {
+  await requireCurrentUser();
   const store = getSettings();
   const hb = getR34SweepHeartbeatStatus();
   return okJson({
@@ -28,6 +30,7 @@ export async function GET() {
 }
 
 export async function POST(request: Request) {
+  await requireCurrentUser();
   const body = await readJson<{ veniceBalanceThreshold?: number }>(request);
   if (body.veniceBalanceThreshold !== undefined) {
     const raw = body.veniceBalanceThreshold;
@@ -36,6 +39,7 @@ export async function POST(request: Request) {
       return errorJson("veniceBalanceThreshold must be a number between 0 and 1000");
     }
     getSettings().veniceBalanceThreshold = num;
+    process.env.VENICE_BALANCE_THRESHOLD = String(num);
   }
   return okJson({ ok: true, settings: { ...getSettings() } });
 }

@@ -9,9 +9,10 @@
 // warning when a Venice top-up is attempted.
 
 import { NextResponse } from "next/server";
-import { execSync } from "child_process";
+import { spawnSync } from "child_process";
 import type { CawPactSummary } from "@/lib/venice/types";
 import { resolveCawRuntimeConfig } from "@/lib/caw/runtime-config-store";
+import { requireCurrentUser } from "@/lib/auth/session";
 
 function inferStatus(value: unknown): CawPactSummary["status"] {
   if (typeof value !== "string") return "unknown";
@@ -30,8 +31,12 @@ function inferStatus(value: unknown): CawPactSummary["status"] {
 }
 
 export async function GET(request: Request) {
+  await requireCurrentUser();
   const url = new URL(request.url);
   const status = url.searchParams.get("status") ?? "active";
+  if (!["active", "pending_approval", "completed", "expired", "revoked", "rejected"].includes(status)) {
+    return NextResponse.json({ ok: false, error: "invalid status" }, { status: 400 });
+  }
   const resolved = resolveCawRuntimeConfig();
 
   const CAW_HOME = process.env.HOME || require("os").homedir();
@@ -41,10 +46,8 @@ export async function GET(request: Request) {
   // caw wallet current selection, not by the runtime config UUID.
   // The runtime config UUID is used downstream (e.g. pair, fetch) but
   // the CLI's `pact list` always reads the active profile.
-  const args = `pact list --status ${status} --limit 50`;
-
   try {
-    const raw = execSync(`caw ${args}`, {
+    const proc = spawnSync("caw", ["pact", "list", "--status", status, "--limit", "50"], {
       timeout: 15000,
       encoding: "utf-8",
       env: {
@@ -52,6 +55,13 @@ export async function GET(request: Request) {
         HOME: CAW_HOME
       }
     });
+    if (proc.error) {
+      throw proc.error;
+    }
+    if (proc.status !== 0) {
+      throw new Error(proc.stderr || `caw pact list failed with status ${proc.status}`);
+    }
+    const raw = proc.stdout ?? "";
     const data = JSON.parse(raw) as {
       result?: { pacts?: Array<Record<string, unknown>> };
     };

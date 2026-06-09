@@ -43,6 +43,10 @@ function resolveVeniceBalanceThreshold(): number {
   );
 }
 
+function isVeniceAutoTopupEnabled(): boolean {
+  return process.env.VENICE_AUTO_X402_TOPUP_ENABLED === "1";
+}
+
 type R34SweepHeartbeatState = {
   intervalHandle: ReturnType<typeof setInterval> | undefined;
   balanceHandle: ReturnType<typeof setInterval> | undefined;
@@ -103,7 +107,6 @@ type R34SweepTickResult = {
 async function runR34SweepTick(): Promise<R34SweepTickResult> {
   // ⚠️ Dynamic import — 切 chunk, 避开静态 module graph.
   const services = await import("@/lib/domain/services");
-  const state = getState();
   try {
     const result = await services.expireStaleTopupOrders({});
 
@@ -126,7 +129,6 @@ async function checkVeniceBalance(): Promise<void> {
   const state = getState();
   state.veniceBalanceThreshold = resolveVeniceBalanceThreshold();
   try {
-    const services = await import("@/lib/domain/services");
     // Mock mode: VENICE_MOCK_BALANCE overrides real balance check
     const mockBalanceStr = process.env.VENICE_MOCK_BALANCE;
     let usdBalance: number;
@@ -134,38 +136,41 @@ async function checkVeniceBalance(): Promise<void> {
       usdBalance = Number(mockBalanceStr);
       console.log(`[venice-balance] MOCK balance=${usdBalance}, threshold=${state.veniceBalanceThreshold}`);
     } else {
-      const balance = await services.refreshVeniceBalance?.({ walletAddress: VENICE_X402_WALLET });
-      usdBalance = balance?.usdBalance ?? 0;
+      const { refreshVeniceBalance } = await import("@/lib/venice/balance");
+      const balance = await refreshVeniceBalance({ walletAddress: VENICE_X402_WALLET });
+      usdBalance = balance.usdBalance;
     }
     state.veniceBalanceUsd = usdBalance;
     state.lastBalanceCheckAt = new Date().toISOString();
 
     // Below threshold → auto top-up if lock is idle
-    if (usdBalance < state.veniceBalanceThreshold) {
+    if (usdBalance < state.veniceBalanceThreshold && isVeniceAutoTopupEnabled()) {
       const topup = await import("@/lib/venice/topup");
       const lockState = topup.getPaymentLockState();
       if (lockState === "idle") {
         const repo = await import("@/lib/store").then(m => m.getCreditRepository());
-        const users = await repo.listUsers?.() ?? [];
-        for (const user of users) {
-          if (!user.cawWalletAddress) continue;
+        const { DEMO_USER_ID } = await import("@/lib/domain/constants");
+        const user = await repo.requireUser(DEMO_USER_ID);
+        if (user.cawWalletAddress) {
           try {
-            const auth = await repo.getActiveAuthorization(user.userId);
-            if (!auth || auth.status !== "active") continue;
-            const pactId = auth.pactId;
-            await topup.runVeniceX402Topup({
-              userId: user.userId,
-              walletAddress: user.cawWalletAddress,
-              pactId,
-              usdAmount: state.veniceBalanceThreshold
-            });
+            const auth = await repo.getActiveAuthorization(user.id, "venice_x402");
+            if (auth?.status === "active") {
+              await topup.runVeniceX402Topup({
+                userId: user.id,
+                walletAddress: user.cawWalletAddress,
+                pactId: auth.pactId,
+                usdAmount: state.veniceBalanceThreshold
+              });
+            }
           } catch (e) {
-            console.warn("[venice-balance] Auto top-up failed for user:", user.userId, e);
+            console.warn("[venice-balance] Auto top-up failed for user:", user.id, e);
           }
         }
       } else {
         console.log(`[venice-balance] Balance below threshold but lock busy (${lockState}), skipping auto top-up`);
       }
+    } else if (usdBalance < state.veniceBalanceThreshold) {
+      console.log("[venice-balance] Balance below threshold; auto top-up disabled");
     }
   } catch (balanceErr) {
     console.warn("[venice-balance] balance check failed:", balanceErr);

@@ -2181,7 +2181,7 @@ function VenicePanel({ cawWalletAddress, hasActivePact, cawMode }: { cawWalletAd
       const res = await fetch("/api/venice/x402-topup", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ usdAmount: topupUsd })
+        body: JSON.stringify({ usdAmount: topupUsd, confirmed: true })
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error ?? "Top-up failed");

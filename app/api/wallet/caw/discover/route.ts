@@ -12,6 +12,7 @@
 import { NextResponse } from "next/server";
 import { execSync } from "child_process";
 import type { CawWalletSummary } from "@/lib/venice/types";
+import { requireCurrentUser } from "@/lib/auth/session";
 
 // Same HOME correction as the transactions route — point at the user's
 // real ~/.cobo-agentic-wallet directory.
@@ -46,6 +47,7 @@ function inferEnv(apiUrl: string): "prod" | "dev" | "unknown" {
 }
 
 export async function GET() {
+  await requireCurrentUser();
   // Surface diagnostics so we can tell why `caw wallet list` returns 0
   // wallets from inside the Next.js runtime even though the same shell
   // command returns 2. We log HOME, cwd, PATH and PATH-tail so the dev

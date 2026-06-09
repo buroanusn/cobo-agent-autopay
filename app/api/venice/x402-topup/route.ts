@@ -2,7 +2,8 @@ import { requireCurrentUser } from "@/lib/auth/session";
 import { errorJson, okJson, readJson } from "@/lib/http";
 import {
   discoverVeniceX402Requirements,
-  pickVeniceBaseUsdcAccept,
+  getOrCreateVeniceX402TopupRequest,
+  pickBaseUsdcAccept,
   runVeniceX402Topup
 } from "@/lib/venice/topup";
 
@@ -10,6 +11,7 @@ export const dynamic = "force-dynamic";
 
 type TopupBody = {
   amountUsdc?: number;
+  usdAmount?: number;
   amountUsdcMinor?: number;
   confirmed?: boolean;
 };
@@ -21,7 +23,7 @@ export async function GET() {
     return okJson({
       ok: true,
       requirements,
-      selected: pickVeniceBaseUsdcAccept(requirements)
+      selected: pickBaseUsdcAccept(requirements)
     });
   } catch (error) {
     return errorJson(error);
@@ -35,20 +37,32 @@ export async function POST(request: Request) {
     if (body.confirmed !== true) {
       throw new Error("Explicit confirmation is required before executing a real Venice x402 top-up.");
     }
-    const amountUsdcMinor = parseAmountUsdcMinor(body);
-    return okJson(await runVeniceX402Topup({ userId: user.id, amountUsdcMinor }));
+    const usdAmount = parseUsdAmount(body);
+    const topupRequest = await getOrCreateVeniceX402TopupRequest({
+      userId: user.id,
+      usdAmount
+    });
+    return okJson(await runVeniceX402Topup({
+      userId: user.id,
+      walletAddress: topupRequest.walletAddress,
+      pactId: topupRequest.pactId,
+      usdAmount: topupRequest.usdAmount
+    }));
   } catch (error) {
     return errorJson(error);
   }
 }
 
-function parseAmountUsdcMinor(body: Partial<TopupBody>) {
-  if (Number.isFinite(body.amountUsdcMinor) && Number(body.amountUsdcMinor) > 0) {
-    return Math.floor(Number(body.amountUsdcMinor));
+function parseUsdAmount(body: Partial<TopupBody>) {
+  if (Number.isFinite(body.usdAmount) && Number(body.usdAmount) > 0) {
+    return Number(body.usdAmount);
   }
   if (Number.isFinite(body.amountUsdc) && Number(body.amountUsdc) > 0) {
-    return Math.floor(Number(body.amountUsdc) * 1_000_000);
+    return Number(body.amountUsdc);
+  }
+  if (Number.isFinite(body.amountUsdcMinor) && Number(body.amountUsdcMinor) > 0) {
+    return Number(body.amountUsdcMinor) / 1_000_000;
   }
   const configured = Number(process.env.VENICE_X402_DEFAULT_USDC_MINOR || 1_000_000);
-  return Number.isFinite(configured) && configured > 0 ? Math.floor(configured) : 1_000_000;
+  return Number.isFinite(configured) && configured > 0 ? configured / 1_000_000 : 1;
 }

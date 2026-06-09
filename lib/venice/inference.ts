@@ -1,6 +1,6 @@
 // Venice inference (Bearer key path). For x402 pay-per-call, see topup.ts.
 
-import { veniceChatCompletion, VeniceApiError } from "@/lib/venice/client";
+import { runVeniceChatCompletion, VeniceApiError } from "@/lib/venice/client";
 import { getVeniceModel } from "@/lib/config/store";
 import { createInferenceLog } from "@/lib/store/venice";
 
@@ -19,7 +19,14 @@ export async function runVeniceInference(input: {
   messages.push({ role: "user" as const, content: input.prompt });
 
   try {
-    const result = await veniceChatCompletion({ model, messages });
+    const result = await runVeniceChatCompletion({
+      model,
+      prompt: input.prompt,
+      systemPrompt: input.systemPrompt
+    }) as {
+      choices?: Array<{ message?: { content?: string } }>;
+      usage?: { prompt_tokens?: number; completion_tokens?: number };
+    };
     const durationMs = Date.now() - start;
     const text = result.choices?.[0]?.message?.content ?? "";
     const log = createInferenceLog({

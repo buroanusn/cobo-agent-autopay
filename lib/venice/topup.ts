@@ -54,21 +54,24 @@ import { getVeniceBaseUrl } from "@/lib/config/store";
 
 const VENICE_X402_TOPUP_PATH = "/api/v1/x402/top-up";
 
+export type VeniceX402Accept = {
+  protocol: "x402";
+  version: 2;
+  network: "eip155:8453" | "solana" | string;
+  asset: string;
+  amount: string;
+  maxAmountRequired?: string;
+  payTo: string;
+  extra?: {
+    name?: string;
+    version?: string;
+    feePayer?: string;
+  };
+};
+
 type X402PaymentRequirementV2 = {
   x402Version: 2;
-  accepts: Array<{
-    protocol: "x402";
-    version: 2;
-    network: "eip155:8453" | "solana" | string;
-    asset: string;
-    amount: string;
-    payTo: string;
-    extra?: {
-      name?: string;
-      version?: string;
-      feePayer?: string;
-    };
-  }>;
+  accepts: VeniceX402Accept[];
   error?: string;
   resource?: { url?: string; description?: string; mimeType?: string };
   authOptions?: { apiKey?: { header?: string; docs?: string } };
@@ -94,6 +97,8 @@ export function pickBaseUsdcAccept(reqs: X402PaymentRequirementV2) {
   const usdc = reqs.accepts.find((a) => a.asset?.toUpperCase().includes("USDC"));
   return usdc ?? reqs.accepts[0];
 }
+
+export const pickVeniceBaseUsdcAccept = pickBaseUsdcAccept;
 
 function runCawFetch(pactId: string, url: string, body: object): Promise<{ stdout: string; stderr: string; exitCode: number }> {
   return new Promise((resolve, reject) => {
@@ -163,13 +168,19 @@ export async function runVeniceX402Topup(input: {
   const url = `${getVeniceBaseUrl()}${VENICE_X402_TOPUP_PATH}`;
   const body = { usdAmount: input.usdAmount, minorUnits: usdcMinor };
 
-  const result = await runCawFetch(input.pactId, url, body);
+  let result: Awaited<ReturnType<typeof runCawFetch>>;
+  try {
+    result = await runCawFetch(input.pactId, url, body);
+  } catch (error) {
+    setLock('idle');
+    throw error;
+  }
   const durationMs = Date.now() - start;
 
   // caw fetch --output=full prints HTTP status line + headers + body
   // Try to parse out the status code from the first line
   const statusLine = result.stdout.split("\n")[0]?.trim() ?? "";
-  const statusMatch = statusLine.match(/^(\d{3})/);
+  const statusMatch = statusLine.match(/\b(\d{3})\b/);
   const responseStatus = statusMatch ? Number(statusMatch[1]) : 0;
 
   // Log a ledger-style entry (we use inference log table for top-ups too, prefix model)
@@ -188,7 +199,7 @@ export async function runVeniceX402Topup(input: {
   // Also update authorization spent count (best-effort, doesn't break on miss)
   try {
     const repo = getCreditRepository();
-    const auth = await repo.getActiveAuthorization(input.userId);
+    const auth = await repo.getActiveAuthorization(input.userId, "venice_x402");
     if (auth) {
       await repo.updateAuthorization({
         ...auth,
@@ -231,7 +242,7 @@ export async function getOrCreateVeniceX402TopupRequest(args: {
   if (!user.cawWalletAddress) {
     throw new Error("Connect a CAW wallet first.");
   }
-  const auth = await repo.getActiveAuthorization(args.userId);
+  const auth = await repo.getActiveAuthorization(args.userId, "venice_x402");
   if (!auth || auth.status !== "active") {
     throw new Error("An active Pact is required. Create one from the dashboard first.");
   }

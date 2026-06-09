@@ -10,13 +10,13 @@ type SweepBody = {
 
 export async function POST(request: Request) {
   try {
-    await requireCurrentUser();
+    const user = await requireCurrentUser();
     const body = await readJson<SweepBody>(request).catch(() => ({} as SweepBody));
     const timeoutMs =
       typeof body.timeoutMs === "number" && body.timeoutMs > 0
         ? body.timeoutMs
         : STALE_TOPUP_TIMEOUT_MS;
-    return okJson(await expireStaleTopupOrders({ timeoutMs }));
+    return okJson(await expireStaleTopupOrders({ userId: user.id, timeoutMs }));
   } catch (error) {
     return errorJson(error);
   }

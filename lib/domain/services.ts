@@ -1945,6 +1945,55 @@ function isStalePolicyPendingOrder(order: { status: string; createdAt: string })
   return Date.now() - createdAt > 30 * 1000;
 }
 
+export const STALE_TOPUP_TIMEOUT_MS = 30 * 60 * 1000;
+
+export async function expireStaleTopupOrders(input: {
+  userId?: string;
+  timeoutMs?: number;
+}) {
+  const repository = getCreditRepository();
+  const userId = input.userId ?? DEMO_USER_ID;
+  const timeoutMs =
+    Number.isFinite(input.timeoutMs) && Number(input.timeoutMs) > 0
+      ? Math.floor(Number(input.timeoutMs))
+      : STALE_TOPUP_TIMEOUT_MS;
+  const cutoffIso = new Date(Date.now() - timeoutMs).toISOString();
+  const pendingOrders = await repository.listPendingTopupOrders(userId);
+  const staleStatuses = new Set<TopupOrder["status"]>([
+    "pending_policy",
+    "pending_approval",
+    "caw_submitted",
+    "chain_pending"
+  ]);
+  const expiredOrders: TopupOrder[] = [];
+  let failedCount = 0;
+
+  for (const order of pendingOrders) {
+    if (!staleStatuses.has(order.status) || order.createdAt > cutoffIso) {
+      continue;
+    }
+    try {
+      const updated = await repository.updateTopupOrder({
+        ...order,
+        status: "approval_expired",
+        failureReason: order.failureReason ?? "stale_topup_order_timeout",
+        updatedAt: repository.nowIso()
+      });
+      expiredOrders.push(updated);
+    } catch {
+      failedCount += 1;
+    }
+  }
+
+  return {
+    cutoffIso,
+    timeoutMs,
+    expiredCount: expiredOrders.length,
+    failedCount,
+    expiredOrders
+  };
+}
+
 export const pricing = {
   creditsPerUsdc: CREDITS_PER_USDC
 };
