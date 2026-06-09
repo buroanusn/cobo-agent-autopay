@@ -1,13 +1,14 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { Wallet, Activity, DollarSign, RefreshCw } from 'lucide-react';
+import { Wallet, Activity, DollarSign, RefreshCw, Coins } from 'lucide-react';
 
 type StatsData = {
   veniceBalance: number | null;
   cawAddress: string | null;
   paymentLockStatus: string | null;
   monthlyTopups: number | null;
+  creditBalance?: number | null;
 };
 
 export default function StatsCards({ data }: { data: StatsData }) {
@@ -42,10 +43,19 @@ export default function StatsCards({ data }: { data: StatsData }) {
       color: 'text-purple-600',
       bg: 'bg-purple-50',
     },
+    {
+      label: '积分余额',
+      value: data.creditBalance !== null && data.creditBalance !== undefined
+        ? data.creditBalance.toLocaleString()
+        : '—',
+      icon: Coins,
+      color: 'text-indigo-600',
+      bg: 'bg-indigo-50',
+    },
   ];
 
   return (
-    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
+    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-6 mb-8">
       {cards.map((card) => {
         const Icon = card.icon;
         return (
