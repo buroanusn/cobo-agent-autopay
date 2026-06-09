@@ -1,18 +1,4 @@
-// createHash("sha256") rewritten with Web Crypto. The original
-// `node:crypto` import triggered webpack's UnhandledSchemeError when
-// this module was bundled for the Next.js server. SHA-256 is available
-// in Node 19+ via globalThis.crypto.subtle. For sync-call sites we use
-// FNV-1a 64-bit — the field is a synthetic display hash for ledger
-// entries, not a security-critical primitive.
-function fnv1a64Hex(input: string): string {
-  let hash = 0xcbf29ce484222325n;
-  const prime = 0x100000001b3n;
-  for (let i = 0; i < input.length; i++) {
-    hash ^= BigInt(input.charCodeAt(i));
-    hash = (hash * prime) & 0xffffffffffffffffn;
-  }
-  return `0x${hash.toString(16).padStart(16, "0")}`;
-}
+import { createHash } from "node:crypto";
 import {
   CREDITS_PER_USDC,
   DEFAULT_CREDIT_ACCOUNT,
@@ -26,12 +12,15 @@ import {
 import type {
   AgentUsageEvent,
   CawAuthorization,
+  CawAuthorizationPurpose,
   CreditAccount,
   DashboardSnapshot,
   LedgerEntry,
   TopupOrder,
   User,
-  CawPairingSession
+  CawPairingSession,
+  CawWalletOnboardingSession,
+  CawOnboardingPrompt
 } from "@/lib/domain/types";
 import { prisma } from "@/lib/store/prisma-client";
 import type { ChainEventRecord, CreditRepository } from "@/lib/store/repository";
@@ -39,7 +28,8 @@ import type { ChainEventRecord, CreditRepository } from "@/lib/store/repository"
 const pendingTopupStatuses: TopupOrder["status"][] = [
   "pending_policy",
   "caw_submitted",
-  "chain_pending"
+  "chain_pending",
+  "pending_approval"
 ];
 
 export const prismaRepository: CreditRepository = {
@@ -50,11 +40,16 @@ export const prismaRepository: CreditRepository = {
     const user = await requirePrismaUser(userId);
     const account = await requirePrismaCreditAccount(userId);
     const authorization = await prisma.cawAuthorization.findFirst({
-      where: { userId },
+      where: { userId, purpose: "credits_payment" },
       orderBy: { createdAt: "desc" }
     });
-    const [pairingSession, topupOrders, ledgerEntries, usageEvents] = await Promise.all([
+    const veniceAuthorization = await prisma.cawAuthorization.findFirst({
+      where: { userId, purpose: "venice_x402" },
+      orderBy: { createdAt: "desc" }
+    });
+    const [pairingSession, cawOnboardingSession, topupOrders, ledgerEntries, usageEvents] = await Promise.all([
       prisma.cawPairingSession.findUnique({ where: { userId } }),
+      prisma.cawWalletOnboardingSession.findUnique({ where: { userId } }),
       prisma.topupOrder.findMany({
         where: { userId },
         orderBy: { createdAt: "desc" },
@@ -82,12 +77,19 @@ export const prismaRepository: CreditRepository = {
     const mappedAuthorization = authorization
       ? mapAuthorization(authorization, { includePactApiKey: false })
       : undefined;
+    const mappedVeniceAuthorization = veniceAuthorization
+      ? mapAuthorization(veniceAuthorization, { includePactApiKey: false })
+      : undefined;
 
     return {
       user: mapUser(user),
       account: mapCreditAccount(account),
       authorization: mappedAuthorization,
+      veniceAuthorization: mappedVeniceAuthorization,
       pairingSession: pairingSession ? mapPairingSession(pairingSession) : undefined,
+      cawOnboardingSession: cawOnboardingSession
+        ? mapCawOnboardingSession(cawOnboardingSession)
+        : undefined,
       guardrails: {
         singleLimitUsdcMinor:
           mappedAuthorization?.singleLimitUsdcMinor ?? DEFAULT_SPEND_POLICY.singleLimitUsdcMinor,
@@ -174,6 +176,16 @@ export const prismaRepository: CreditRepository = {
     });
     return mapUser(created);
   },
+  async findUserByCoboId(coboId: string): Promise<User | undefined> {
+    const user = await prisma.user.findFirst({
+      where: { coboId: { equals: coboId, mode: "insensitive" } }
+    });
+    return user ? mapUser(user) : undefined;
+  },
+  async findUserByCawWalletId(walletId: string): Promise<User | undefined> {
+    const user = await prisma.user.findUnique({ where: { cawWalletId: walletId } });
+    return user ? mapUser(user) : undefined;
+  },
   async findUserByCawWalletAddress(walletAddress: string): Promise<User | undefined> {
     const user = await prisma.user.findFirst({
       where: { cawWalletAddress: { equals: walletAddress, mode: "insensitive" } }
@@ -204,16 +216,21 @@ export const prismaRepository: CreditRepository = {
       where: { id: user.id },
       data: {
         email: user.email,
+        coboId: user.coboId,
+        coboIdBoundAt: user.coboIdBoundAt ? new Date(user.coboIdBoundAt) : null,
         cawWalletId: user.cawWalletId,
         cawWalletAddress: user.cawWalletAddress
       }
     });
     return mapUser(updated);
   },
-  async getActiveAuthorization(userId: string): Promise<CawAuthorization | undefined> {
+  async getActiveAuthorization(
+    userId: string,
+    purpose: CawAuthorizationPurpose = "credits_payment"
+  ): Promise<CawAuthorization | undefined> {
     await ensureDemoData(userId);
     const authorization = await prisma.cawAuthorization.findFirst({
-      where: { userId },
+      where: { userId, purpose },
       orderBy: { createdAt: "desc" }
     });
     return authorization ? mapAuthorization(authorization) : undefined;
@@ -223,6 +240,7 @@ export const prismaRepository: CreditRepository = {
       data: {
         id: authorization.id,
         userId: authorization.userId,
+        purpose: authorization.purpose,
         walletAddress: authorization.walletAddress,
         pactId: authorization.pactId,
         pactApiKey: authorization.pactApiKey,
@@ -245,6 +263,7 @@ export const prismaRepository: CreditRepository = {
       where: { id: authorization.id },
       data: {
         walletAddress: authorization.walletAddress,
+        purpose: authorization.purpose,
         pactId: authorization.pactId,
         pactApiKey: authorization.pactApiKey,
         status: authorization.status,
@@ -282,6 +301,55 @@ export const prismaRepository: CreditRepository = {
     });
     return mapPairingSession(created);
   },
+  async getCawOnboardingSession(
+    userId: string
+  ): Promise<CawWalletOnboardingSession | undefined> {
+    await ensureDemoData(userId);
+    const session = await prisma.cawWalletOnboardingSession.findUnique({ where: { userId } });
+    return session ? mapCawOnboardingSession(session) : undefined;
+  },
+  async upsertCawOnboardingSession(
+    session: CawWalletOnboardingSession
+  ): Promise<CawWalletOnboardingSession> {
+    const updated = await prisma.cawWalletOnboardingSession.upsert({
+      where: { userId: session.userId },
+      create: {
+        userId: session.userId,
+        sessionId: session.sessionId,
+        status: session.status,
+        phase: session.phase,
+        walletStatus: session.walletStatus,
+        needsInput: session.needsInput,
+        prompts: session.prompts,
+        nextAction: session.nextAction,
+        lastError: session.lastError,
+        agentName: session.agentName,
+        apiUrl: session.apiUrl,
+        walletId: session.walletId,
+        walletName: session.walletName,
+        agentId: session.agentId,
+        createdAt: new Date(session.createdAt),
+        updatedAt: new Date(session.updatedAt)
+      },
+      update: {
+        sessionId: session.sessionId,
+        status: session.status,
+        phase: session.phase,
+        walletStatus: session.walletStatus,
+        needsInput: session.needsInput,
+        prompts: session.prompts,
+        nextAction: session.nextAction,
+        lastError: session.lastError,
+        agentName: session.agentName,
+        apiUrl: session.apiUrl,
+        walletId: session.walletId,
+        walletName: session.walletName,
+        agentId: session.agentId,
+        updatedAt: new Date(session.updatedAt)
+      }
+    });
+    return mapCawOnboardingSession(updated);
+  },
   async createUsageEvent(
     input: Omit<AgentUsageEvent, "id" | "createdAt">
   ): Promise<AgentUsageEvent> {
@@ -318,6 +386,16 @@ export const prismaRepository: CreditRepository = {
       orderBy: { createdAt: "asc" }
     });
     return order ? mapTopupOrder(order) : undefined;
+  },
+  async listPendingTopupOrders(userId: string): Promise<TopupOrder[]> {
+    const orders = await prisma.topupOrder.findMany({
+      where: {
+        userId,
+        status: { in: pendingTopupStatuses }
+      },
+      orderBy: { createdAt: "asc" }
+    });
+    return orders.map(mapTopupOrder);
   },
   async createTopupOrder(
     input: Omit<TopupOrder, "id" | "orderId" | "onchainOrderId" | "createdAt" | "updatedAt">
@@ -371,18 +449,23 @@ export const prismaRepository: CreditRepository = {
     });
     return order ? mapTopupOrder(order) : undefined;
   },
-  async listStaleTopupOrders(input: {
-    cutoffIso: string;
-    statuses: TopupOrder["status"][];
-  }): Promise<TopupOrder[]> {
-    const orders = await prisma.topupOrder.findMany({
+  async findTopupOrderByTxHash(input: {
+    userId: string;
+    txHash: string;
+  }): Promise<TopupOrder | undefined> {
+    const order = await prisma.topupOrder.findFirst({
       where: {
-        status: { in: input.statuses },
-        createdAt: { lt: new Date(input.cutoffIso) }
+        userId: input.userId,
+        txHash: {
+          equals: input.txHash,
+          mode: "insensitive"
+        }
       },
-      orderBy: { createdAt: "asc" }
+      orderBy: {
+        createdAt: "desc"
+      }
     });
-    return orders.map(mapTopupOrder);
+    return order ? mapTopupOrder(order) : undefined;
   },
   async hasChainEvent(eventId: string): Promise<boolean> {
     const count = await prisma.chainEventSeen.count({ where: { eventId } });
@@ -488,12 +571,14 @@ function nowIso() {
 }
 
 function orderIdToBytes32(orderId: string) {
-  return fnv1a64Hex(orderId);
+  return `0x${createHash("sha256").update(orderId).digest("hex")}`;
 }
 
 function mapUser(user: {
   id: string;
   email: string;
+  coboId: string | null;
+  coboIdBoundAt: Date | null;
   cawWalletId: string | null;
   cawWalletAddress: string | null;
   createdAt: Date;
@@ -501,6 +586,8 @@ function mapUser(user: {
   return {
     id: user.id,
     email: user.email,
+    coboId: user.coboId ?? undefined,
+    coboIdBoundAt: user.coboIdBoundAt?.toISOString(),
     cawWalletId: user.cawWalletId ?? undefined,
     cawWalletAddress: user.cawWalletAddress ?? undefined,
     createdAt: user.createdAt.toISOString()
@@ -525,6 +612,71 @@ function mapPairingSession(session: {
   };
 }
 
+function mapCawOnboardingSession(session: {
+  userId: string;
+  sessionId: string | null;
+  status: CawWalletOnboardingSession["status"];
+  phase: string | null;
+  walletStatus: string | null;
+  needsInput: boolean;
+  prompts: unknown;
+  nextAction: string | null;
+  lastError: string | null;
+  agentName: string | null;
+  apiUrl: string | null;
+  walletId: string | null;
+  walletName: string | null;
+  agentId: string | null;
+  createdAt: Date;
+  updatedAt: Date;
+}): CawWalletOnboardingSession {
+  return {
+    userId: session.userId,
+    sessionId: session.sessionId ?? undefined,
+    status: session.status,
+    phase: session.phase ?? undefined,
+    walletStatus: session.walletStatus ?? undefined,
+    needsInput: session.needsInput,
+    prompts: normalizePromptList(session.prompts),
+    nextAction: session.nextAction ?? undefined,
+    lastError: session.lastError ?? undefined,
+    agentName: session.agentName ?? undefined,
+    apiUrl: session.apiUrl ?? undefined,
+    walletId: session.walletId ?? undefined,
+    walletName: session.walletName ?? undefined,
+    agentId: session.agentId ?? undefined,
+    createdAt: session.createdAt.toISOString(),
+    updatedAt: session.updatedAt.toISOString()
+  };
+}
+
+function normalizePromptList(value: unknown): CawOnboardingPrompt[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  return value
+    .map((entry): CawOnboardingPrompt | undefined => {
+      if (typeof entry !== "object" || entry === null) {
+        return undefined;
+      }
+      const record = entry as Record<string, unknown>;
+      const id = stringField(record, "id", "");
+      if (!id) {
+        return undefined;
+      }
+      return {
+        id,
+        label: stringField(record, "label", undefined),
+        message: stringField(record, "message", undefined),
+        type: stringField(record, "type", undefined),
+        required: booleanField(record, "required"),
+        secret: booleanField(record, "secret"),
+        options: arrayStringField(record, "options")
+      };
+    })
+    .filter((entry): entry is CawOnboardingPrompt => Boolean(entry));
+}
+
 function mapCreditAccount(account: {
   userId: string;
   balanceCredits: number;
@@ -545,6 +697,7 @@ function mapAuthorization(
   authorization: {
     id: string;
     userId: string;
+    purpose: CawAuthorization["purpose"];
     walletAddress: string;
     pactId: string;
     pactApiKey: string | null;
@@ -564,6 +717,7 @@ function mapAuthorization(
   return {
     id: authorization.id,
     userId: authorization.userId,
+    purpose: authorization.purpose,
     walletAddress: authorization.walletAddress,
     pactId: authorization.pactId,
     pactApiKey: options.includePactApiKey ? authorization.pactApiKey ?? undefined : undefined,
@@ -660,6 +814,29 @@ function mapUsageEvent(event: {
     status: event.status,
     createdAt: event.createdAt.toISOString()
   };
+}
+
+function stringField<T extends string | undefined>(
+  source: Record<string, unknown>,
+  key: string,
+  fallback: T
+): string | T {
+  const value = source[key];
+  return typeof value === "string" && value.length > 0 ? value : fallback;
+}
+
+function booleanField(source: Record<string, unknown>, key: string) {
+  const value = source[key];
+  return typeof value === "boolean" ? value : undefined;
+}
+
+function arrayStringField(source: Record<string, unknown>, key: string) {
+  const value = source[key];
+  if (!Array.isArray(value)) {
+    return undefined;
+  }
+  const strings = value.filter((entry): entry is string => typeof entry === "string");
+  return strings.length ? strings : undefined;
 }
 
 function isUniqueConstraintError(error: unknown) {

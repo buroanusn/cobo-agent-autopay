@@ -1,94 +1,129 @@
 import { NextRequest, NextResponse } from "next/server";
+import { requireCurrentUser } from "@/lib/auth/session";
+import {
+  getX402ResourcePriceUsdcMinor,
+  verifyX402ResourcePayment
+} from "@/lib/domain/services";
+import {
+  CREDITS_PER_USDC,
+  getConfiguredCawChainId,
+  getConfiguredChain
+} from "@/lib/domain/constants";
+import { formatUsdc } from "@/lib/domain/money";
+import { errorJson, okJson, readJson } from "@/lib/http";
 
-const PAYMENT_ADDRESS = process.env.TREASURY_ADDRESS || "0xb511E49FDd677aEA606c12f809d742d433f4AFD5";
-const PRICE_WEI = "1000000000000000"; // 0.001 ETH in wei
+export const dynamic = "force-dynamic";
 
-const RESOURCE_DATA = {
-  insight: "CAW + x402 = agent-native payments on the open internet",
-  model: "HTTP 402 → CAW wallet signs → resource unlocked",
-  chain: "Sepolia testnet",
-  timestamp: new Date().toISOString(),
+type X402ProofBody = {
+  paymentProof?: string;
 };
 
-const verifiedPayments = new Set<string>();
-
-export async function GET(req: NextRequest) {
-  return handleRequest(req);
+export async function GET(request: NextRequest) {
+  return handleResourceRequest(request);
 }
 
-export async function POST(req: NextRequest) {
-  return handleRequest(req);
+export async function POST(request: NextRequest) {
+  return handleResourceRequest(request);
 }
 
-async function handleRequest(req: NextRequest) {
-  const paymentProof = req.headers.get("x-payment-proof");
-
-  if (paymentProof) {
-    // Verify on-chain
-    try {
-      const sepoliaRpc = "https://ethereum-sepolia-rpc.publicnode.com";
-      const res = await fetch(sepoliaRpc, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          jsonrpc: "2.0",
-          method: "eth_getTransactionReceipt",
-          params: [paymentProof],
-          id: 1,
-        }),
-      });
-      const data = await res.json();
-      const receipt = data?.result;
-
-      if (receipt && receipt.status === "0x1") {
-        const to = receipt.to?.toLowerCase();
-        if (to === PAYMENT_ADDRESS.toLowerCase()) {
-          verifiedPayments.add(paymentProof);
-          return NextResponse.json({
-            success: true,
-            resource: RESOURCE_DATA,
-            paymentVerified: true,
-            txHash: paymentProof,
-            blockNumber: receipt.blockNumber,
-          });
-        }
-      }
-    } catch {
-      // Fall through to 402
+async function handleResourceRequest(request: NextRequest) {
+  try {
+    const proof = await readPaymentProof(request);
+    if (!proof) {
+      return paymentRequired(request);
     }
 
-    return NextResponse.json(
-      { error: "Payment verification failed" },
-      { status: 402 }
-    );
+    const user = await requireCurrentUser();
+    const verification = await verifyX402ResourcePayment({
+      userId: user.id,
+      proof
+    });
+
+    if (!verification.ok) {
+      return paymentRequired(request, verification.reason);
+    }
+
+    return okJson({
+      ok: true,
+      resource: {
+        insight: "x402 request unlocked by a CAW-backed Base USDC payment.",
+        account: user.email,
+        chain: getConfiguredChain().name,
+        creditsPerUsdc: CREDITS_PER_USDC,
+        unlockedAt: new Date().toISOString()
+      },
+      paymentVerified: true,
+      payment: {
+        orderId: verification.order.orderId,
+        txHash: verification.order.txHash,
+        amountUsdcMinor: verification.order.amountUsdcMinor,
+        status: verification.order.status
+      }
+    });
+  } catch (error) {
+    return errorJson(error);
+  }
+}
+
+async function readPaymentProof(request: NextRequest) {
+  const headerProof =
+    request.headers.get("x-payment-proof") ||
+    request.headers.get("x-payment") ||
+    request.headers.get("payment");
+  if (headerProof) {
+    return headerProof;
   }
 
-  // Return standard x402 Payment Required response
-  const response = NextResponse.json(
-    {
-      x402Version: 1,
-      error: "Payment required",
-      accepts: [
-        {
-          scheme: "exact",
-          network: "eip155:11155111", // Sepolia
-          maxAmountRequired: PRICE_WEI,
-          resource: req.nextUrl.pathname,
-          description: "Premium data access via x402 + CAW",
-          mimeType: "application/json",
-          payTo: PAYMENT_ADDRESS,
-          maxTimeoutSeconds: 300,
-          asset: "0x0000000000000000000000000000000000000000", // native ETH
-        },
-      ],
-    },
-    { status: 402 }
-  );
+  if (request.method === "GET") {
+    return request.nextUrl.searchParams.get("paymentProof") ?? undefined;
+  }
 
-  // Standard x402 headers
+  const body = await readJson<X402ProofBody>(request);
+  return body.paymentProof;
+}
+
+function paymentRequired(request: NextRequest, reason?: string) {
+  const payment = buildPaymentRequirement(request, reason);
+  const response = NextResponse.json(payment, { status: 402 });
   response.headers.set("X-Payment-Required", "true");
-  response.headers.set("WWW-Authenticate", "Payment");
-  response.headers.set("Accept-Payment", `scheme="exact", network="eip155:11155111", asset="native", amount="${PRICE_WEI}", payTo="${PAYMENT_ADDRESS}"`);
-
+  response.headers.set("WWW-Authenticate", 'Payment realm="x402"');
+  response.headers.set(
+    "Accept-Payment",
+    `scheme="exact", network="${payment.accepts[0].network}", asset="${payment.accepts[0].asset}", amount="${payment.accepts[0].maxAmountRequired}", payTo="${payment.accepts[0].payTo}"`
+  );
   return response;
+}
+
+function buildPaymentRequirement(request: NextRequest, reason?: string) {
+  const chain = getConfiguredChain();
+  const amountUsdcMinor = getX402ResourcePriceUsdcMinor();
+  const paymentContractAddress = process.env.PAYMENT_CONTRACT_ADDRESS || "";
+
+  return {
+    x402Version: 1,
+    error: reason ?? "payment_required",
+    accepts: [
+      {
+        scheme: "exact",
+        network: chain.id === 8453 ? "base" : "base-sepolia",
+        chainId: `eip155:${chain.id}`,
+        cawChainId: getConfiguredCawChainId(),
+        maxAmountRequired: String(amountUsdcMinor),
+        amount: formatUsdc(amountUsdcMinor),
+        asset: chain.usdcAddress,
+        payTo: paymentContractAddress,
+        resource: request.nextUrl.pathname,
+        description: "Unlock this resource with a CAW-authorized USDC payment.",
+        mimeType: "application/json",
+        maxTimeoutSeconds: 300,
+        extra: {
+          paymentContractAddress,
+          token: "USDC",
+          decimals: 6,
+          creditsPerUsdc: CREDITS_PER_USDC,
+          proofHeader: "x-payment-proof"
+        }
+      }
+    ]
+  };
 }
