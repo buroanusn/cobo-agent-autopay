@@ -24,11 +24,18 @@ const nextConfig = {
         "node:path": false,
         "node:fs": false,
         "node:stream": false,
+        "node:child_process": false,
         crypto: false,
         buffer: false,
         fs: false,
-        stream: false
+        stream: false,
+        child_process: false
       };
+    }
+    // On the server, mark node:child_process as external so webpack
+    // never tries to bundle it — it stays a native Node.js require.
+    if (isServer) {
+      config.externals = [...(config.externals || []), "node:child_process"];
     }
     return config;
   }

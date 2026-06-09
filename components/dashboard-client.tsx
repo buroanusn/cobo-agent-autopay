@@ -415,6 +415,38 @@ export function DashboardClient({
   const [prompt, setPrompt] = useState(
     "Analyze the user's portfolio and continue the agent task."
   );
+  const [topupAmount, setTopupAmount] = useState("5");
+  const [thresholdInput, setThresholdInput] = useState("5");
+  const [savingThreshold, setSavingThreshold] = useState(false);
+
+  // Load threshold from API on mount
+  useEffect(() => {
+    fetch("/api/settings", { cache: "no-store" })
+      .then((r) => r.json())
+      .then((data) => {
+        const v = data.veniceBalanceThreshold;
+        if (v !== undefined) {
+          setThresholdInput(String(v));
+        }
+      })
+      .catch(() => {});
+  }, []);
+
+  async function saveThreshold() {
+    setSavingThreshold(true);
+    try {
+      const res = await fetch("/api/settings", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ veniceBalanceThreshold: Number(thresholdInput) })
+      });
+      if (res.ok) setMessage("阈值已保存");
+      else setError("Save failed");
+    } catch {
+      setError("Save failed");
+    }
+    setSavingThreshold(false);
+  }
   const [pactIntent, setPactIntent] = useState(
     "允许这个 Agent 在我的站内 credits 余额不足时，使用 Base Sepolia USDC 自动充值；每次最多 1 USDC，每天最多 5 USDC，有效期 7 天。"
   );
@@ -861,6 +893,39 @@ export function DashboardClient({
             >
               {t.topupNow}
             </button>
+          </div>
+
+          {/* ── 自动充值阈值设置 ── */}
+          <div className="stack" style={{ marginTop: 14 }}>
+            <span className="metric-label">
+              自动充值阈值（USD）
+            </span>
+            <div className="row">
+              <input
+                type="number"
+                inputMode="decimal"
+                min="0"
+                max="1000"
+                step="0.1"
+                value={thresholdInput}
+                onChange={(e) => setThresholdInput(e.target.value)}
+                style={{
+                  width: 120,
+                  minHeight: 36,
+                  border: "1px solid var(--line)",
+                  borderRadius: 7,
+                  padding: "0 10px"
+                }}
+              />
+              <button
+                className="secondary compact"
+                onClick={saveThreshold}
+                disabled={savingThreshold}
+                style={{ marginLeft: 8 }}
+              >
+                {savingThreshold ? "保存中..." : "保存"}
+              </button>
+            </div>
           </div>
 
           <label className="stack" style={{ marginTop: 14 }}>

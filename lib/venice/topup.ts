@@ -13,6 +13,42 @@ import { getCawRuntimeStatus } from "@/lib/caw/gateway";
 import { getCreditRepository } from "@/lib/store";
 import { createInferenceLog } from "@/lib/store/venice";
 import { nowIso } from "@/lib/store/memory";
+
+// ── Payment lock ──────────────────────────────────────────────────────────
+export type PaymentLockState = 'idle' | 'processing' | 'cooldown';
+
+let paymentLock: PaymentLockState = 'idle';
+let lockTimer: NodeJS.Timeout | null = null;
+const LOCK_TIMEOUT_MS = 10 * 60 * 1000; // 10 minutes hard unlock
+const COOLDOWN_MS = 30_000;            // 30 seconds cool-down after success
+
+export function getPaymentLockState(): PaymentLockState {
+  return paymentLock;
+}
+
+function setLock(state: PaymentLockState, timeoutMs?: number): void {
+  paymentLock = state;
+  if (lockTimer) {
+    clearTimeout(lockTimer);
+    lockTimer = null;
+  }
+  if (timeoutMs !== undefined) {
+    lockTimer = setTimeout(() => {
+      console.warn(`[payment-lock] Timer expired after ${timeoutMs}ms, forcing idle`);
+      paymentLock = 'idle';
+      lockTimer = null;
+    }, timeoutMs);
+  }
+}
+
+// TODO: 钱包互充功能预留入口
+async function onInsufficientWalletBalance(): Promise<void> {
+  // 预留：CAW余额不足时，向其他钱包发起补充请求
+  // 后续版本实现
+  console.log('[autopay] CAW wallet balance insufficient, inter-wallet transfer not yet implemented')
+}
+
+// ── Existing imports below ────────────────────────────────────────────────
 import type { VeniceX402TopupRequest, VeniceX402TopupResult } from "@/lib/venice/types";
 import { getVeniceBaseUrl } from "@/lib/config/store";
 
@@ -92,13 +128,29 @@ export async function runVeniceX402Topup(input: {
   pactId: string;
   usdAmount: number;
 }): Promise<VeniceX402TopupResult> {
+  // ── Payment lock check ────────────────────────────────────────────────
+  if (paymentLock !== 'idle') {
+    console.warn(`[payment-lock] runVeniceX402Topup blocked by state=${paymentLock}`);
+    return {
+      status: "failed",
+      paymentPayload: "",
+      responseStatus: 0,
+      responseBody: "",
+      durationMs: 0,
+      error: 'LOCK_BUSY'
+    } as VeniceX402TopupResult & { error: string };
+  }
+  setLock('processing', LOCK_TIMEOUT_MS);
+
   const start = Date.now();
   // Sanity checks
   const runtime = await getCawRuntimeStatus();
   if (runtime.mode !== "http") {
+    setLock('idle');
     throw new Error("Venice x402 top-up requires real CAW mode (CAW_MODE=http).");
   }
   if (!input.pactId) {
+    setLock('idle');
     throw new Error("An active Pact is required. Create one from the dashboard first.");
   }
 
@@ -148,9 +200,22 @@ export async function runVeniceX402Topup(input: {
     // Non-fatal: best-effort budget tracking
   }
 
+  const success = responseStatus >= 200 && responseStatus < 300;
+
+  if (success) {
+    setLock('cooldown');
+    setTimeout(() => setLock('idle'), COOLDOWN_MS);
+  } else {
+    setLock('idle');
+    // Check for insufficient funds → fire hook
+    if (/insufficient.*fund|INSUFFICIENT_FUNDS/i.test(result.stderr + result.stdout)) {
+      void onInsufficientWalletBalance();
+    }
+  }
+
   return {
-    status: responseStatus >= 200 && responseStatus < 300 ? "submitted" : "failed",
-    paymentPayload: "", // caw fetch handles the header internally; we don't expose it
+    status: success ? "submitted" : "failed",
+    paymentPayload: "",
     responseStatus,
     responseBody: result.stdout,
     durationMs
