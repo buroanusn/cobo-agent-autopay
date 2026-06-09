@@ -5,7 +5,7 @@ import { execSync } from "child_process";
 // (~/.cobo-agentic-wallet/profiles/...) where their CAW wallets live.
 // Previous value pointed at the "think" Hermes profile home which has a
 // different (empty) caw profile.
-const CAW_HOME = "/Users/jichenyang";
+const CAW_HOME = process.env.HOME || require("os").homedir();
 
 export async function GET() {
   try {

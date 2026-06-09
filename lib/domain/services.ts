@@ -198,8 +198,9 @@ export async function createPairingCode(input: { userId?: string }) {
   const userId = input.userId ?? DEMO_USER_ID;
   await repository.requireUser(userId);
   // Use caw CLI instead of SDK (Node.js HTTPS → TLS failure with 198.18.x.x DNS)
+  const HOME = process.env.HOME || "/root";
   const { execSync } = eval('require')('child_process') as typeof import("child_process");
-  const rawJson = execSync(`HOME=/Users/jichenyang caw wallet pair`, {
+  const rawJson = execSync(`HOME=${HOME} caw wallet pair`, {
     timeout: 15000,
     encoding: "utf-8"
   });
@@ -257,7 +258,8 @@ export async function refreshPairingStatus(input: { userId?: string }) {
   let token: string | undefined;
   try {
     const { execSync } = eval('require')('child_process') as typeof import("child_process");
-    const rawJson = execSync(`HOME=/Users/jichenyang caw wallet pair-status`, {
+    const HOME = process.env.HOME || "/root";
+    const rawJson = execSync(`HOME=${HOME} caw wallet pair-status`, {
       timeout: 10000,
       encoding: "utf-8"
     });
@@ -340,12 +342,13 @@ export async function connectCawWallet(input: {
   const user = await repository.requireUser(userId);
   // Use caw CLI instead of SDK
   const { execSync } = eval('require')('child_process') as typeof import("child_process");
-  const currentJson = execSync(`HOME=/Users/jichenyang caw wallet current`, {
+  const HOME = process.env.HOME || "/root";
+  const currentJson = execSync(`HOME=${HOME} caw wallet current`, {
     timeout: 10000, encoding: "utf-8"
   });
   const current = JSON.parse(currentJson) as { wallet_uuid?: string; wallet_name?: string };
   const walletId = current.wallet_uuid ?? "";
-  const balanceJson = execSync(`HOME=/Users/jichenyang caw wallet balance --limit 5`, {
+  const balanceJson = execSync(`HOME=${HOME} caw wallet balance --limit 5`, {
     timeout: 10000, encoding: "utf-8"
   });
   const balanceData = JSON.parse(balanceJson) as {
@@ -395,10 +398,11 @@ export async function createCawAuthorization(input: {
   ).toISOString();
   // Use caw CLI instead of SDK
   const { execSync } = eval('require')('child_process') as typeof import("child_process");
+  const HOME = process.env.HOME || "/root";
   const shj = (s: string) => s.replace(/[\\"$`]/g, "\\$&").replace(/\n/g, "\\n");
   const policiesJson = JSON.stringify(preview.policies);
   const conditionsJson = JSON.stringify(preview.completionConditions);
-  const cmd = `HOME=/Users/jichenyang caw pact submit` +
+  const cmd = `HOME=${HOME} caw pact submit` +
     ` --intent "${shj(preview.intent)}"` +
     ` --original-intent "${shj(preview.originalIntent)}"` +
     ` --policies '${policiesJson.replace(/'/g, "'\\''")}'` +
@@ -513,8 +517,8 @@ export async function refreshCawAuthorization(input: { userId?: string }) {
   // 198.18.x.x that Node.js cannot connect to, while the Go-based
   // caw CLI works fine).
   const { execSync } = eval('require')('child_process') as typeof import("child_process");
-  const CAW_HOME = "/Users/jichenyang";
-  const pactStatusJson = execSync(`caw pact list --status all --limit 50`, {
+  const CAW_HOME = process.env.HOME || "/root";
+  const pactStatusJson = execSync(`HOME=${CAW_HOME} caw pact list --status active,completed,expired,rejected,revoked,withdrawn,pending_approval --limit 50`, {
     timeout: 15000,
     encoding: "utf-8",
     env: { ...process.env, HOME: CAW_HOME }
@@ -615,6 +619,7 @@ export async function approveUsdcForCreditsPayment(input: {
   }
 
   const { execSync } = eval('require')('child_process') as typeof import("child_process");
+  const HOME = process.env.HOME || "/root";
   const calldata = encodeFunctionData({
     abi: [
       {
@@ -636,7 +641,7 @@ export async function approveUsdcForCreditsPayment(input: {
   });
   const chainId = getConfiguredCawChainId();
   const txJson = execSync(
-    `HOME=/Users/jichenyang caw tx call` +
+    `HOME=${HOME} caw tx call` +
     ` --pact-id "${authorization.pactId}"` +
     ` --contract "${getConfiguredChain().usdcAddress}"` +
     ` --calldata "${calldata}"` +
@@ -666,9 +671,10 @@ export async function requestTestTokens(input: { userId?: string; tokenId?: stri
   const user = await repository.requireUser(userId);
   const walletAddress = user.cawWalletAddress ?? DEMO_CAW_WALLET;
   const { execSync } = eval('require')('child_process') as typeof import("child_process");
+  const HOME = process.env.HOME || "/root";
   const tokenId = input.tokenId ?? "SETH_USDC1";
   const rawJson = execSync(
-    `HOME=/Users/jichenyang caw faucet deposit -a ${walletAddress} -t ${tokenId}`,
+    `HOME=${HOME} caw faucet deposit -a ${walletAddress} -t ${tokenId}`,
     { timeout: 20000, encoding: "utf-8" }
   );
   const parsed = JSON.parse(rawJson) as {
@@ -863,6 +869,7 @@ export async function executeCreditsTopup(input: {
 
   const chain = getConfiguredChain();
   const { execSync } = eval('require')('child_process') as typeof import("child_process");
+  const HOME = process.env.HOME || "/root";
   const buyCalldata = encodeFunctionData({
     abi: [
       {
@@ -886,7 +893,7 @@ export async function executeCreditsTopup(input: {
   });
   const cawChainId = getConfiguredCawChainId();
   const cawJson = execSync(
-    `HOME=/Users/jichenyang caw tx call` +
+    `HOME=${HOME} caw tx call` +
     ` --pact-id "${policy.authorization.pactId}"` +
     ` --contract "${resolvePaymentContractAddress()}"` +
     ` --calldata "${buyCalldata}"` +

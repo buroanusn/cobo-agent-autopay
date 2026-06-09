@@ -13,8 +13,6 @@ import { execSync } from "child_process";
 import type { CawPactSummary } from "@/lib/venice/types";
 import { resolveCawRuntimeConfig } from "@/lib/caw/runtime-config-store";
 
-const CAW_HOME = "/Users/jichenyang";
-
 function inferStatus(value: unknown): CawPactSummary["status"] {
   if (typeof value !== "string") return "unknown";
   const normalized = value.toLowerCase();
@@ -35,6 +33,8 @@ export async function GET(request: Request) {
   const url = new URL(request.url);
   const status = url.searchParams.get("status") ?? "active";
   const resolved = resolveCawRuntimeConfig();
+
+  const CAW_HOME = process.env.HOME || require("os").homedir();
 
   // We do NOT pass --wallet-id because caw pact list operates on the
   // active profile. The active profile is determined by HOME + the

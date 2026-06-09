@@ -15,7 +15,7 @@ import type { CawWalletSummary } from "@/lib/venice/types";
 
 // Same HOME correction as the transactions route — point at the user's
 // real ~/.cobo-agentic-wallet directory.
-const CAW_HOME = "/Users/jichenyang";
+const CAW_HOME = process.env.HOME || require("os").homedir();
 
 function runCaw(args: string): { stdout: string; stderr: string; status: number | null } {
   const result = require("child_process").spawnSync(

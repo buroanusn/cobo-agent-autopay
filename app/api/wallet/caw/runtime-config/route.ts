@@ -35,7 +35,7 @@ type CawProfileCredentials = {
 // 600, owner-only). This route is a leaf node.js route (no client
 // instrumentation chain) so it's safe to import `fs` and `path` here.
 function readCawProfileCredentials(): CawProfileCredentials | null {
-  const home = process.env.HOME || "/Users/jichenyang";
+  const home = process.env.HOME || require("os").homedir();
   const profilesDir = join(home, ".cobo-agentic-wallet", "profiles");
   if (!existsSync(profilesDir)) return null;
 
