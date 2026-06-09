@@ -25,6 +25,11 @@ const nextConfig = {
         "node:fs": false,
         "node:stream": false,
         "node:child_process": false,
+        "node:crypto": false,
+        "node:fs": false,
+        "node:fs/promises": false,
+        "node:path": false,
+        "node:stream": false,
         crypto: false,
         buffer: false,
         fs: false,
@@ -32,10 +37,22 @@ const nextConfig = {
         child_process: false
       };
     }
-    // On the server, mark node:child_process as external so webpack
-    // never tries to bundle it — it stays a native Node.js require.
+    // On the server, all node: scheme modules must be external so webpack
+    // never tries to bundle them — they stay native Node.js requires.
     if (isServer) {
-      config.externals = [...(config.externals || []), "node:child_process"];
+      const nodeSchemes = [
+        "node:child_process",
+        "node:crypto",
+        "node:buffer",
+        "node:url",
+        "node:path",
+        "node:fs",
+        "node:fs/promises",
+        "node:os",
+        "node:util",
+        "node:stream"
+      ];
+      config.externals = [...(config.externals || []), ...nodeSchemes];
     }
     return config;
   }

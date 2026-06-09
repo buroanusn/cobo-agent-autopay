@@ -97,7 +97,7 @@ export function pickBaseUsdcAccept(reqs: X402PaymentRequirementV2) {
   const usdc = reqs.accepts.find((a) => a.asset?.toUpperCase().includes("USDC"));
   return usdc ?? reqs.accepts[0];
 }
-
+// Alias for remote wiki branch import
 export const pickVeniceBaseUsdcAccept = pickBaseUsdcAccept;
 
 function runCawFetch(pactId: string, url: string, body: object): Promise<{ stdout: string; stderr: string; exitCode: number }> {

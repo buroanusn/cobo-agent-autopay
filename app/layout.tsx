@@ -1,19 +1,21 @@
-import type { Metadata } from "next";
-import "./globals.css";
+import type { Metadata } from 'next';
+import './globals.css';
 
 export const metadata: Metadata = {
-  title: "Agent Credits Wallet",
-  description: "CAW-controlled auto top-up flow for agent credits."
+  title: 'cobo-agent-autopay',
+  description: '为 AI Agent 提供自动小额免密支付基础设施',
 };
 
 export default function RootLayout({
-  children
-}: Readonly<{
+  children,
+}: {
   children: React.ReactNode;
-}>) {
+}) {
   return (
-    <html lang="en">
-      <body>{children}</body>
+    <html lang="zh-CN">
+      <body className="antialiased">
+        {children}
+      </body>
     </html>
   );
 }
