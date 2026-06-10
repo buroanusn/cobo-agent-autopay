@@ -90,6 +90,149 @@ function getState(): R34SweepHeartbeatState {
   return globalThis.__R34_SWEEP_HEARTBEAT_STATE__;
 }
 
+// ── BlockRun balance monitoring ──────────────────────────────────────────
+// BlockRun 和 Venice 不同：BlockRun 是实时扣款，每次推理直接从 CAW 钱包扣 USDC。
+// 这里监控 CAW 钱包 USDC 余额，低于阈值时仅告警（不自动充值）。
+//
+// 通过 `caw wallet balance` 命令读取链上 USDC 余额。
+// 如果 caw CLI 不支持，则回退到 viem 直接读链上。
+
+import { createPublicClient, http as viemHttp, formatUnits } from "viem";
+import { base, baseSepolia } from "viem/chains";
+import { spawn } from "node:child_process";
+
+type BlockRunBalanceState = {
+  usdBalance: number;
+  minBalance: number;
+  lastCheckAt: string | undefined;
+  lastError: string | undefined;
+};
+
+const DEFAULT_BLOCKRUN_MIN_BALANCE = 5;
+
+function getBlockRunBalanceState(): BlockRunBalanceState {
+  // Attached to the heartbeat global — no separate global needed
+  const g = globalThis as typeof globalThis & { __BLOCKRUN_BALANCE_STATE__?: BlockRunBalanceState };
+  if (!g.__BLOCKRUN_BALANCE_STATE__) {
+    g.__BLOCKRUN_BALANCE_STATE__ = {
+      usdBalance: 0,
+      minBalance: Number(process.env.BLOCKRUN_MIN_BALANCE ?? DEFAULT_BLOCKRUN_MIN_BALANCE),
+      lastCheckAt: undefined,
+      lastError: undefined,
+    };
+  }
+  return g.__BLOCKRUN_BALANCE_STATE__;
+}
+
+async function readCawWalletUsdcBalance(): Promise<number | null> {
+  // 优先用 `caw wallet balance` 命令
+  try {
+    const proc = await new Promise<{ stdout: string; stderr: string; code: number }>((resolve) => {
+      const child = spawn("caw", ["wallet", "balance", "--token", "USDC", "--chain", "base"], {
+        env: { ...process.env, NODE_TLS_REJECT_UNAUTHORIZED: "0" },
+        stdio: ["ignore", "pipe", "pipe"],
+      });
+      let stdout = "", stderr = "";
+      child.stdout.on("data", (b: Buffer) => (stdout += b.toString()));
+      child.stderr.on("data", (b: Buffer) => (stderr += b.toString()));
+      child.on("close", (code: number | null) => resolve({ stdout, stderr, code: code ?? 1 }));
+    });
+
+    // Try to parse balance from caw output
+    const output = (proc.stdout || proc.stderr).trim();
+    const match = output.match(/(\d+\.?\d*)\s*USDC/i);
+    if (match) {
+      return Number(match[1]);
+    }
+    // Some caw versions return JSON
+    try {
+      const json = JSON.parse(output);
+      const bal = json.balance ?? json.usdcBalance ?? json.amount;
+      if (bal !== undefined) return Number(bal);
+    } catch {
+      // not JSON
+    }
+  } catch {
+    // caw command not available — fall through to viem
+  }
+
+  // 回退：用 viem 直接读链上 USDC 余额
+  try {
+    const isTestnet = process.env.BLOCKRUN_USE_TESTNET === "true";
+    const chain = isTestnet ? baseSepolia : base;
+    const client = createPublicClient({
+      chain,
+      transport: viemHttp(),
+    });
+
+    // USDC contract address on Base: 0x833589fCD6eDb6E08f4c7c32D4f71b54bDA02913
+    // Base Sepolia USDC: 0x036CbD53842c5426634e7929541eC2318f3dCF7e
+    const usdcAddress = isTestnet
+      ? "0x036CbD53842c5426634e7929541eC2318f3dCF7e"
+      : "0x833589fCD6eDb6E08f4c7c32D4f71b54bDA02913";
+
+    // ERC-20 balanceOf ABI
+    const abi = [
+      {
+        constant: true,
+        inputs: [{ name: "_owner", type: "address" }],
+        name: "balanceOf",
+        outputs: [{ name: "balance", type: "uint256" }],
+        type: "function",
+      },
+    ] as const;
+
+    // Read wallet address from env
+    const walletAddress = process.env.BLOCKRUN_WALLET_ADDRESS || process.env.BASE_WALLET_ADDRESS;
+    if (!walletAddress) {
+      console.warn("[blockrun-balance] BLOCKRUN_WALLET_ADDRESS not set, skipping viem balance check");
+      return null;
+    }
+
+    const balance = await client.readContract({
+      address: usdcAddress as `0x${string}`,
+      abi,
+      functionName: "balanceOf",
+      args: [walletAddress as `0x${string}`],
+    });
+
+    // USDC has 6 decimals
+    return Number(formatUnits(balance, 6));
+  } catch (err) {
+    console.warn("[blockrun-balance] viem balance check failed:", err instanceof Error ? err.message : err);
+    return null;
+  }
+}
+
+async function checkBlockRunBalance(): Promise<void> {
+  const state = getBlockRunBalanceState();
+  state.minBalance = Number(process.env.BLOCKRUN_MIN_BALANCE ?? DEFAULT_BLOCKRUN_MIN_BALANCE);
+
+  try {
+    const balance = await readCawWalletUsdcBalance();
+    if (balance === null) {
+      state.lastError = "Failed to read USDC balance";
+      return;
+    }
+    state.usdBalance = balance;
+    state.lastCheckAt = new Date().toISOString();
+    state.lastError = undefined;
+
+    if (balance < state.minBalance) {
+      console.log(
+        `[blockrun] CAW USDC 余额不足（当前：$${balance.toFixed(2)}，阈值：$${state.minBalance.toFixed(2)}），请手动补充钱包`
+      );
+    } else {
+      console.log(
+        `[blockrun] CAW USDC 余额充足（当前：$${balance.toFixed(2)}，阈值：$${state.minBalance.toFixed(2)}）`
+      );
+    }
+  } catch (err) {
+    state.lastError = err instanceof Error ? err.message : "unknown error";
+    console.warn("[blockrun-balance] check failed:", state.lastError);
+  }
+}
+
 function resolveIntervalMs(): number {
   const raw = Number.parseInt(process.env.R34_SWEEP_INTERVAL_MS ?? "", 10);
   if (Number.isFinite(raw) && raw >= MIN_INTERVAL_MS) return raw;
@@ -219,9 +362,15 @@ export function startR34SweepHeartbeat(): void {
   );
   // Start independent balance checker (60s)
   if (!state.balanceHandle) {
-    void checkVeniceBalance(); // immediate first check
+    void Promise.allSettled([
+      checkVeniceBalance(),
+      checkBlockRunBalance(),
+    ]);
     state.balanceHandle = setInterval(() => {
-      void checkVeniceBalance();
+      void Promise.allSettled([
+        checkVeniceBalance(),
+        checkBlockRunBalance(),
+      ]);
     }, BALANCE_CHECK_INTERVAL_MS);
   }
 }

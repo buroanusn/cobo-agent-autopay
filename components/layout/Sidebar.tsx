@@ -2,12 +2,13 @@
 
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { LayoutDashboard, Wallet, Sparkles, CreditCard, Settings, LogOut } from 'lucide-react';
+import { LayoutDashboard, Wallet, Sparkles, CreditCard, Settings, LogOut, Zap } from 'lucide-react';
 
 const navItems = [
   { label: 'Dashboard', href: '/dashboard', icon: LayoutDashboard, ready: true },
   { label: 'Wallet', href: '/dashboard/wallet', icon: Wallet, ready: true },
   { label: 'Venice', href: '/dashboard/venice', icon: Sparkles, ready: true },
+  { label: 'BlockRun', href: '/dashboard/blockrun', icon: Zap, ready: true },
   { label: 'Payments', href: '/dashboard/payments', icon: CreditCard, ready: true },
   { label: 'Settings', href: '/dashboard/settings', icon: Settings, ready: true },
 ];
