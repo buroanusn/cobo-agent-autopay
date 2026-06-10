@@ -1,10 +1,8 @@
 'use client';
 
 import { useState, type FormEvent } from 'react';
-import { useRouter } from 'next/navigation';
 
 export default function LoginPage() {
-  const router = useRouter();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [busy, setBusy] = useState(false);
@@ -25,7 +23,7 @@ export default function LoginPage() {
       if (!response.ok || result.error) {
         throw new Error(result.error ?? 'Login failed.');
       }
-      router.push('/dashboard');
+      window.location.href = '/dashboard';
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : 'Login failed.');
     } finally {

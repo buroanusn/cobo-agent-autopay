@@ -9,10 +9,10 @@
 // warning when a Venice top-up is attempted.
 
 import { NextResponse } from "next/server";
+import { spawnSync } from "child_process";
 import type { CawPactSummary } from "@/lib/venice/types";
 import { resolveCawRuntimeConfig } from "@/lib/caw/runtime-config-store";
 import { requireCurrentUser } from "@/lib/auth/session";
-import { listCawCliPacts } from "@/lib/caw/cli";
 
 function inferStatus(value: unknown): CawPactSummary["status"] {
   if (typeof value !== "string") return "unknown";
@@ -31,15 +31,44 @@ function inferStatus(value: unknown): CawPactSummary["status"] {
 }
 
 export async function GET(request: Request) {
-  const user = await requireCurrentUser();
+  await requireCurrentUser();
   const url = new URL(request.url);
   const status = url.searchParams.get("status") ?? "active";
   if (!["active", "pending_approval", "completed", "expired", "revoked", "rejected"].includes(status)) {
     return NextResponse.json({ ok: false, error: "invalid status" }, { status: 400 });
   }
   const resolved = resolveCawRuntimeConfig();
+
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const CAW_HOME = process.env.HOME || require("os").homedir();
+
+  // We do NOT pass --wallet-id because caw pact list operates on the
+  // active profile. The active profile is determined by HOME + the
+  // caw wallet current selection, not by the runtime config UUID.
+  // The runtime config UUID is used downstream (e.g. pair, fetch) but
+  // the CLI's `pact list` always reads the active profile.
   try {
-    const pactsRaw = await listCawCliPacts({ userId: user.id, status, limit: 50 });
+    const proc = spawnSync("caw", ["pact", "list", "--status", status, "--limit", "50"], {
+      timeout: 15000,
+      encoding: "utf-8",
+      env: {
+        ...process.env,
+        HOME: CAW_HOME
+      }
+    });
+    if (proc.error) {
+      throw proc.error;
+    }
+    if (proc.status !== 0) {
+      throw new Error(proc.stderr || `caw pact list failed with status ${proc.status}`);
+    }
+    const raw = proc.stdout ?? "";
+    const data = JSON.parse(raw) as {
+      result?: { pacts?: Array<Record<string, unknown>> };
+    };
+    const pactsRaw = Array.isArray(data?.result?.pacts)
+      ? data.result.pacts
+      : [];
 
     const pacts: CawPactSummary[] = pactsRaw.map((p) => {
       const remaining = (p.remaining ?? {}) as Record<string, unknown>;

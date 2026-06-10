@@ -8,6 +8,7 @@ import {
   createCawCliPairingCode,
   getCawCliPairingStatus,
   getCawCliRuntimeStatus,
+  getCawWalletInfoFromList,
   readCawCliWalletProfile,
   runCawOnboard,
   showCawCliPact,
@@ -501,12 +502,24 @@ export async function connectCawWallet(input: {
   if (existingWalletUser && existingWalletUser.id !== user.id) {
     throw new Error(`This CAW wallet profile is already bound to ${existingWalletUser.email}.`);
   }
-  const gateway = createCawGateway();
-  const connection = await gateway.connectWallet({
-    userId,
-    walletId,
-    walletAddress: input.walletAddress
-  });
+  // Try CLI first (works without .env credentials — uses the local caw profile).
+  // Fall back to gateway only if CLI can't resolve the wallet.
+  let connection: { connectionId: string; walletId?: string; walletAddress: string };
+  const cliInfo = await getCawWalletInfoFromList(walletId);
+  if (cliInfo?.walletAddress) {
+    connection = {
+      connectionId: `cli_${walletId}`,
+      walletId,
+      walletAddress: cliInfo.walletAddress
+    };
+  } else {
+    const gateway = createCawGateway();
+    connection = await gateway.connectWallet({
+      userId,
+      walletId,
+      walletAddress: input.walletAddress
+    });
+  }
   if (!connection.walletAddress) {
     throw new Error("CAW wallet address was not found for this Wallet UUID.");
   }
@@ -528,6 +541,26 @@ export async function connectCawWallet(input: {
     cawWalletId: connection.walletId ?? walletId,
     cawWalletAddress: connection.walletAddress
   });
+
+  // Auto-create an onboarding session with wallet_active status so that
+  // subsequent CLI operations (pairing, pact) use the CLI path instead of
+  // the gateway (which requires .env credentials).
+  const existingOnboarding = await repository.getCawOnboardingSession(userId);
+  if (!existingOnboarding || existingOnboarding.status !== "wallet_active") {
+    const cliInfo = await getCawWalletInfoFromList(walletId);
+    await repository.upsertCawOnboardingSession({
+      userId,
+      status: "wallet_active",
+      needsInput: false,
+      prompts: [],
+      walletId: connection.walletId ?? walletId,
+      walletName: cliInfo?.walletName,
+      agentId: cliInfo?.agentId,
+      apiUrl: cliInfo?.apiUrl,
+      createdAt: existingOnboarding?.createdAt ?? repository.nowIso(),
+      updatedAt: repository.nowIso()
+    });
+  }
 
   return {
     connection,

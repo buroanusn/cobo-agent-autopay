@@ -7,6 +7,8 @@ import TopNav from './TopNav';
 type AppLayoutProps = {
   title: string;
   children: React.ReactNode;
+  companyName?: string;
+  creditsPerUsdc?: number;
 };
 
 export default function AppLayout({ title, children }: AppLayoutProps) {

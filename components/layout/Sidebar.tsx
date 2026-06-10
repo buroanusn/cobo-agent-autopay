@@ -2,12 +2,14 @@
 
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { LayoutDashboard, CreditCard, Settings, LogOut } from 'lucide-react';
+import { LayoutDashboard, Wallet, Sparkles, CreditCard, Settings, LogOut } from 'lucide-react';
 
 const navItems = [
-  { label: 'Dashboard', href: '/dashboard', icon: LayoutDashboard },
-  { label: 'Payments', href: '/dashboard/payments', icon: CreditCard },
-  { label: 'Settings', href: '/dashboard/settings', icon: Settings },
+  { label: 'Dashboard', href: '/dashboard', icon: LayoutDashboard, ready: true },
+  { label: 'Wallet', href: '/dashboard/wallet', icon: Wallet, ready: true },
+  { label: 'Venice', href: '/dashboard/venice', icon: Sparkles, ready: true },
+  { label: 'Payments', href: '/dashboard/payments', icon: CreditCard, ready: true },
+  { label: 'Settings', href: '/dashboard/settings', icon: Settings, ready: true },
 ];
 
 type SidebarProps = {
@@ -29,15 +31,35 @@ export default function Sidebar({ userEmail }: SidebarProps) {
         {navItems.map((item) => {
           const isActive = pathname === item.href;
           const Icon = item.icon;
+          const className = `flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors ${
+            !item.ready
+              ? 'text-gray-600 cursor-not-allowed'
+              : isActive
+                ? 'bg-[#2563EB] text-white'
+                : 'text-gray-400 hover:text-white hover:bg-[#1A2940]'
+          }`;
+
+          if (!item.ready) {
+            return (
+              <div
+                key={item.href}
+                className={className}
+                title="该页面正在重写中"
+              >
+                <Icon className="w-5 h-5 flex-shrink-0" />
+                <span className="flex-1">{item.label}</span>
+                <span className="text-[10px] uppercase tracking-wider text-gray-500 bg-white/5 px-1.5 py-0.5 rounded">
+                  soon
+                </span>
+              </div>
+            );
+          }
+
           return (
             <Link
               key={item.href}
               href={item.href}
-              className={`flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors ${
-                isActive
-                  ? 'bg-[#2563EB] text-white'
-                  : 'text-gray-400 hover:text-white hover:bg-[#1A2940]'
-              }`}
+              className={className}
             >
               <Icon className="w-5 h-5 flex-shrink-0" />
               <span>{item.label}</span>

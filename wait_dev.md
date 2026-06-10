@@ -255,11 +255,9 @@ CawRuntimeCredential
    - 当前 heartbeat 仍偏 demo user。
    - 需要改为扫描所有 `autoTopupEnabled=true` 且有 active `venice_x402` Pact 的用户/Agent。
 
-4. **x402 执行已完成最简用户级 CAW profile 隔离，待实机验证**
-   - `lib/caw/cli.ts` 已提供用户级 CAW CLI helper，默认使用 `.caw-cli-homes/<userId>`。
-   - `discover`、`pacts`、`runtime-config` 路由已切到当前登录用户的 CAW_HOME。
-   - `runVeniceX402Topup()` 已改为复用 `runCawFetchX402({ userId, pactId, ... })`，不再直接使用全局 `spawn("caw")`。
-   - 后续验证重点: A/B 用户分别登录后，wallet list、pact list、Venice x402 top-up 都只使用各自 `.caw-cli-homes/<userId>`。
+4. **x402 执行还需要彻底改成用户级 CAW profile**
+   - `runVeniceX402Topup()` 不应使用默认 `spawn("caw", ...)`。
+   - 应复用 `runCawFetchX402({ userId, pactId, ... })`，确保 CLI 使用 `.caw-cli-homes/<userId>`。
 
 5. **支付结果记录还不完整**
    - 当前还没有 Venice x402 独立订单模型。
@@ -275,7 +273,7 @@ CawRuntimeCredential
 2. 绑定成功后强引导创建 `venice_x402` Pact。
 3. 实现 Pact 审批状态轮询，保存 active authorization。
 4. 新增 `VeniceTopupOrder`。
-5. 实机验证 `runVeniceX402Topup()` 用户级 `runCawFetchX402()` 路径。
+5. 把 `runVeniceX402Topup()` 改为用户级 `runCawFetchX402()`。
 6. heartbeat 改为扫描启用自动充值的用户/Agent。
 7. 余额不足时创建订单并执行 x402。
 8. 成功后刷新 Venice balance，失败时记录结构化原因。
@@ -1512,66 +1510,3 @@ caw tx sign-message --help
    ```text
    implement user scoped caw onboarding
    ```
-
-## 下一阶段建议: 先做可实机演示的 x402 闭环
-
-更新时间: 2026-06-10
-
-当前优先级不建议继续扩复杂生产功能，先把本地和实机 demo 跑通:
-
-1. 修复本地可运行问题:
-   - `npm install` 目前有 `postcss` override 冲突。
-   - 本地缺 `lucide-react`，会导致 `next build` 失败。
-   - 页面还有既有 TypeScript 类型错误，需要先修到 dashboard 可启动。
-
-2. 准备 demo 配置:
-   - 明确 mock/real CAW 的环境变量切换。
-   - 提供不含密钥的 `.env.local.example` 或更新 `.env.example`。
-   - 保持真实自动支付默认关闭。
-
-3. 做最小手动验证路径:
-   - 用户登录。
-   - 绑定或读取该用户自己的 CAW profile。
-   - 创建或选择 active `venice_x402` Pact。
-   - 手动触发一次 Venice x402 top-up。
-   - 后端记录本次请求使用的 `userId`、CAW_HOME、wallet、pactId、HTTP 状态和错误信息。
-
-4. 多用户实机验收:
-   - A 用户 wallet list / pact list 只读 `.caw-cli-homes/<A userId>`。
-   - B 用户 wallet list / pact list 只读 `.caw-cli-homes/<B userId>`。
-   - A/B 触发 Venice x402 top-up 时不串钱包、不串 Pact。
-
-## x402 支付中转站 / Facilitator 选型
-
-x402 里的支付中转站通常叫 facilitator。它负责验证支付、提交链上结算，并把结果返回给资源服务器。CAW 在本项目中更像用户钱包和签名/执行方；只要 `caw fetch` 能处理 x402 challenge，就可以对接标准 x402 服务端或 facilitator。
-
-当前可选方向:
-
-1. **x402.org Testnet Facilitator**
-   - Endpoint: `https://x402.org/facilitator`
-   - 面向测试网，不需要 API key。
-   - 适合本项目先做最小实机 demo。
-   - 文档来源: Coinbase x402 network support。
-
-2. **Coinbase CDP Facilitator**
-   - Endpoint: `https://api.cdp.coinbase.com/platform/v2/x402`
-   - 需要 CDP API key。
-   - 支持 Base / Base Sepolia 等网络，适合正式 demo 或生产方向。
-   - 文档来源: Coinbase x402 network support。
-
-3. **Polygon Labs Facilitator**
-   - x402 ecosystem 中列出的 facilitator。
-   - 更适合后续扩 Polygon Mainnet / Amoy testnet 支付，不是当前 Venice/Base demo 的首选。
-   - 文档来源: x402 ecosystem。
-
-4. **自建 Facilitator**
-   - x402 是开放协议，可以基于 reference implementation 自建。
-   - 优点是可控 verify/settle、日志、风控和重试。
-   - 缺点是开发和运维成本高。
-   - 当前阶段不建议先做，等 Venice/CAW demo 跑通后再评估。
-
-当前建议:
-
-- 先用 Venice 当前 x402 endpoint 或 x402.org testnet facilitator 做实机演示。
-- 不要先自建 facilitator。
-- demo 稳定后，再评估是否切到 Coinbase CDP Facilitator 作为正式环境方案。
