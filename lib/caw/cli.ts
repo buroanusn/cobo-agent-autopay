@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { mkdir, readdir, readFile } from "node:fs/promises";
+import { mkdir } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { homedir } from "node:os";
 import path from "node:path";
@@ -45,14 +45,6 @@ export type CawCliWalletProfile = {
   walletPaired?: boolean;
   pairTokenStatus?: string;
   walletStatus?: string;
-};
-
-export type CawProfileCredentials = {
-  apiKey: string;
-  apiUrl: string;
-  agentId: string;
-  walletName: string;
-  walletUuid: string;
 };
 
 export type CawCliPaymentResult = {
@@ -120,85 +112,67 @@ export async function readCawCliWalletProfile(userId: string): Promise<CawCliWal
   };
 }
 
-export async function listCawCliWallets(userId: string) {
-  const raw = await runCawCliJson<unknown>(userId, ["wallet", "list"]);
-  if (Array.isArray(raw)) {
-    return raw as Array<Record<string, unknown>>;
-  }
-  if (raw && typeof raw === "object") {
-    const result = (raw as { result?: unknown }).result;
-    if (Array.isArray(result)) {
-      return result as Array<Record<string, unknown>>;
-    }
-  }
-  return [];
-}
-
-export async function listCawCliPacts(input: {
-  userId: string;
-  status: string;
-  limit?: number;
-}) {
-  const raw = await runCawCliJson<unknown>(input.userId, [
-    "pact",
-    "list",
-    "--status",
-    input.status,
-    "--limit",
-    String(input.limit ?? 50)
-  ]);
-  if (raw && typeof raw === "object") {
-    const result = (raw as { result?: { pacts?: unknown } }).result;
-    if (Array.isArray(result?.pacts)) {
-      return result.pacts as Array<Record<string, unknown>>;
-    }
-  }
-  return [];
-}
-
-export async function readCawProfileCredentials(
-  userId: string,
-  walletUuid?: string
-): Promise<CawProfileCredentials | null> {
-  const home = await ensureCawHome(userId);
-  const profilesDir = path.join(home, ".cobo-agentic-wallet", "profiles");
-  if (!existsSync(profilesDir)) return null;
-
-  const defaultAgentId = await readDefaultAgentId(home);
-  const dirs = (await readdir(profilesDir))
-    .filter((dir) => dir.startsWith("profile_caw_agent_"))
-    .sort((left, right) => {
-      const leftMatch = left === `profile_${defaultAgentId}`;
-      const rightMatch = right === `profile_${defaultAgentId}`;
-      if (leftMatch && !rightMatch) return -1;
-      if (!leftMatch && rightMatch) return 1;
-      return 0;
+export async function getCawWalletInfoFromList(walletUuid: string): Promise<{
+  walletAddress?: string;
+  walletName?: string;
+  agentId?: string;
+  apiUrl?: string;
+  isPaired?: boolean;
+} | null> {
+  // Read the CLI profile from the real HOME to get API credentials,
+  // then use the CAW SDK to resolve the wallet address.
+  const realHome = homedir();
+  try {
+    const { execFileSync } = await import("node:child_process");
+    const listStdout = execFileSync(resolveCawBinary(), ["wallet", "list"], {
+      encoding: "utf-8",
+      timeout: 15_000,
+      env: { ...process.env, HOME: realHome },
     });
+    const wallets: Record<string, unknown>[] = JSON.parse(listStdout);
+    const match = wallets.find((w) => String(w.wallet_uuid ?? "") === walletUuid);
+    if (!match) return null;
 
-  for (const dir of dirs) {
-    const credPath = path.join(profilesDir, dir, "credentials");
-    if (!existsSync(credPath)) continue;
-    try {
-      const raw = await readFile(credPath, "utf-8");
-      const parsed = JSON.parse(raw) as Record<string, unknown>;
-      const apiKey = String(parsed.api_key ?? "");
-      const apiUrl = String(parsed.api_url ?? "");
-      const agentId = String(parsed.agent_id ?? "");
-      const profileWalletUuid = String(parsed.wallet_uuid ?? "");
-      if (!apiKey || !apiUrl) continue;
-      if (walletUuid && profileWalletUuid !== walletUuid) continue;
-      return {
-        apiKey,
-        apiUrl,
-        agentId,
-        walletName: String(parsed.wallet_name ?? "default"),
-        walletUuid: profileWalletUuid
-      };
-    } catch {
-      // Skip unparseable profile and keep scanning.
+    const profileDir = String(match.profile_dir ?? "");
+    let apiKey = "";
+    let apiUrl = String(match.api_url ?? "");
+    if (profileDir) {
+      try {
+        const fs = await import("node:fs/promises");
+        const credPath = path.join(profileDir, "credentials");
+        const credRaw = await fs.readFile(credPath, "utf-8");
+        const cred = JSON.parse(credRaw);
+        apiKey = cred.api_key ?? "";
+        apiUrl = cred.api_url ?? apiUrl;
+      } catch { /* ignore */ }
     }
+
+    // Use the CAW SDK to list wallet addresses (correct API path).
+    let walletAddress: string | undefined;
+    if (apiKey && apiUrl) {
+      try {
+        const { Configuration, WalletsApi } = await import("@cobo/agentic-wallet");
+        const config = new Configuration({ apiKey, basePath: apiUrl });
+        const walletsApi = new WalletsApi(config);
+        const resp = await walletsApi.listWalletAddresses(walletUuid);
+        const addrs = resp.data?.result;
+        const first = Array.isArray(addrs) ? addrs[0] as unknown as Record<string, unknown> : undefined;
+        if (first) {
+          walletAddress = (first.address ?? first.addr ?? undefined) as string | undefined;
+        }
+      } catch { /* ignore */ }
+    }
+
+    return {
+      walletAddress,
+      walletName: firstString(match, ["wallet_name"]) ?? undefined,
+      agentId: firstString(match, ["agent_id"]) ?? undefined,
+      apiUrl: apiUrl || undefined,
+      isPaired: Boolean(match.is_paired || match.status === "active"),
+    };
+  } catch {
+    return null;
   }
-  return null;
 }
 
 export async function createCawCliPairingCode(userId: string) {
@@ -269,25 +243,34 @@ export async function getCawCliRuntimeStatus(input: {
   walletId?: string;
 }): Promise<CawRuntimeStatus> {
   const chain = getConfiguredChain();
-  const profile = await readCawCliWalletProfile(input.userId).catch((error) => ({
+  let profile: CawCliWalletProfile | { error: string } = await readCawCliWalletProfile(input.userId).catch((error) => ({
     error: error instanceof Error ? error.message : "Unable to read caw CLI profile."
   }));
-  const hasProfile = !("error" in profile);
-  const walletId = hasProfile ? profile.walletId ?? input.walletId : input.walletId;
-  const walletPaired = hasProfile
-    ? Boolean(profile.walletPaired || profile.pairTokenStatus === "paired" || profile.pairTokenStatus === "completed")
+  // Fallback: if isolated HOME has no profile, try the global CLI HOME.
+  // This covers users who onboarded via `caw onboard` outside the app.
+  if ("error" in profile) {
+    const fallback = await readCawCliWalletProfile("default").catch(() => null);
+    if (fallback && !("error" in fallback)) {
+      profile = fallback;
+    }
+  }
+  const p = !("error" in profile) ? profile : undefined;
+
+  const walletId = p ? p.walletId ?? input.walletId : input.walletId;
+  const walletPaired = p
+    ? Boolean(p.walletPaired || p.pairTokenStatus === "paired" || p.pairTokenStatus === "completed")
     : false;
   const status: CawRuntimeStatus = {
     mode: process.env.CAW_MODE === "mock" && process.env.CAW_ALLOW_MOCK === "true" ? "mock" : "http",
-    environment: inferCawEnvironment(hasProfile ? profile.apiUrl ?? "" : ""),
-    apiConfigured: hasProfile,
+    environment: inferCawEnvironment(p ? p.apiUrl ?? "" : ""),
+    apiConfigured: Boolean(p),
     walletConfigured: Boolean(walletId),
     walletId,
-    walletName: hasProfile ? profile.walletName : undefined,
-    walletStatus: hasProfile ? profile.walletStatus : undefined,
-    walletAddress: hasProfile ? profile.walletAddress : undefined,
+    walletName: p ? p.walletName : undefined,
+    walletStatus: p ? p.walletStatus : undefined,
+    walletAddress: p ? p.walletAddress : undefined,
     walletPaired,
-    pairTokenStatus: hasProfile ? profile.pairTokenStatus : undefined,
+    pairTokenStatus: p ? p.pairTokenStatus : undefined,
     chainId: getConfiguredCawChainId(),
     chainName: chain.name,
     faucetTokenId:
@@ -296,7 +279,7 @@ export async function getCawCliRuntimeStatus(input: {
     paymentContractConfigured: Boolean(process.env.PAYMENT_CONTRACT_ADDRESS),
     treasuryConfigured: Boolean(process.env.TREASURY_ADDRESS),
     missing: [],
-    error: hasProfile ? undefined : profile.error
+    error: p ? undefined : ("error" in profile ? profile.error : undefined)
   };
   status.missing = getRuntimeMissingItems(status);
   return status;
@@ -347,7 +330,7 @@ async function runCawCliJson<T>(
   }
 }
 
-export async function runCawCli(
+async function runCawCli(
   userId: string,
   args: string[],
   options: { timeoutMs?: number } = {}
@@ -376,9 +359,24 @@ export async function runCawCli(
   }
 }
 
-export async function ensureCawHome(userId: string) {
+async function ensureCawHome(userId: string) {
   const home = path.join(getCawHomeRoot(), sanitizePathSegment(userId));
   await mkdir(home, { recursive: true, mode: 0o700 });
+  // Symlink global profiles dir into the isolated HOME so CLI commands
+  // (pairing, pact, status) can find wallets onboarded outside the app.
+  const globalProfiles = path.join(homedir(), ".cobo-agentic-wallet", "profiles");
+  const localProfiles = path.join(home, ".cobo-agentic-wallet", "profiles");
+  if (existsSync(globalProfiles) && !existsSync(localProfiles)) {
+    const localParent = path.join(home, ".cobo-agentic-wallet");
+    await mkdir(localParent, { recursive: true, mode: 0o700 });
+    try {
+      await import("node:fs/promises").then((fs) =>
+        fs.symlink(globalProfiles, localProfiles, "dir")
+      );
+    } catch {
+      // Already exists or permission denied — ignore.
+    }
+  }
   return home;
 }
 
@@ -394,26 +392,17 @@ function resolveCawBinary() {
   return existsSync(homeBinary) ? homeBinary : "caw";
 }
 
-function buildCawEnv(home: string) {
-  const realCawBin = path.join(homedir(), ".cobo-agentic-wallet", "bin");
+function buildCawEnv(_home: string) {
+  // Use the real HOME so CLI commands find the global ~/.cobo-agentic-wallet/
+  // profiles that were created via `caw onboard`. Per-user isolation is
+  // handled at the application layer (DB), not at the CLI HOME level.
+  const realHome = homedir();
+  const realCawBin = path.join(realHome, ".cobo-agentic-wallet", "bin");
   return {
     ...process.env,
-    HOME: home,
+    HOME: realHome,
     PATH: `${realCawBin}${path.delimiter}${process.env.PATH ?? ""}`
   };
-}
-
-async function readDefaultAgentId(home: string) {
-  const configPath = path.join(home, ".cobo-agentic-wallet", "config");
-  if (!existsSync(configPath)) return null;
-  try {
-    const cfg = JSON.parse(await readFile(configPath, "utf-8")) as Record<string, unknown>;
-    if (typeof cfg.default_profile === "string") return cfg.default_profile;
-    if (typeof cfg.active_agent_id === "string") return cfg.active_agent_id;
-  } catch {
-    // Ignore unparseable config; credential scan can still continue.
-  }
-  return null;
 }
 
 function normalizeOnboardResult(raw: Record<string, unknown>): CawCliOnboardResult {
