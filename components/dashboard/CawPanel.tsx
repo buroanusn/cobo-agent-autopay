@@ -265,8 +265,8 @@ export default function CawPanel() {
           <p>1. 当前版本是单钱包部署模式：一份部署只读取一个后端 CAW Agent Wallet。</p>
           <p>2. 给另一个人使用时，先在服务器或本机用 CAW CLI 创建新的 Agent Wallet。</p>
           <p>3. 把新钱包的 API URL、API Key、Wallet ID、钱包地址写入该部署的环境变量。</p>
-          <p>4. 重启网站后，页面会变成"未配对"，再生成配对码给新用户手机 CAW App 输入。</p>
-          <p>5. 配对成功后点击"连接 CAW"，再让用户在手机里批准 Pact 和 USDC 授权。</p>
+          <p>4. 重启网站后，页面会变成&quot;未配对&quot;，再生成配对码给新用户手机 CAW App 输入。</p>
+          <p>5. 配对成功后点击&quot;连接 CAW&quot;，再让用户在手机里批准 Pact 和 USDC 授权。</p>
         </div>
       </details>
 

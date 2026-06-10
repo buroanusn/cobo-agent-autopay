@@ -398,8 +398,11 @@ function buildCawEnv(_home: string) {
   // handled at the application layer (DB), not at the CLI HOME level.
   const realHome = homedir();
   const realCawBin = path.join(realHome, ".cobo-agentic-wallet", "bin");
+  // Strip proxy env vars to prevent Shadowrocket / local proxy from hijacking
+  // DNS and causing TLS ECONNRESET on api.agenticwallet.cobo.com
+  const { http_proxy, https_proxy, HTTP_PROXY, HTTPS_PROXY, ALL_PROXY, all_proxy, ...cleanEnv } = process.env;
   return {
-    ...process.env,
+    ...cleanEnv,
     HOME: realHome,
     PATH: `${realCawBin}${path.delimiter}${process.env.PATH ?? ""}`
   };

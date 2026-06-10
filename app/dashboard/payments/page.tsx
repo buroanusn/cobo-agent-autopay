@@ -23,7 +23,7 @@ import TransactionRecords from '@/components/payments/v2/TransactionRecords';
  */
 export default function PaymentsPage() {
   return (
-    <AppLayout title="Payments">
+    <AppLayout title="支付">
       <div className="space-y-6">
         {/* 顶部 Agent 选择器（静态只读，多 Agent 预留） */}
         <div className="flex items-center justify-between">

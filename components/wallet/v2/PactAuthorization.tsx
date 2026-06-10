@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { Coins, Sparkles, Send, RefreshCw, ShieldCheck, Loader2, AlertCircle, CheckCircle2, XCircle } from 'lucide-react';
+import { Sparkles, Send, RefreshCw, ShieldCheck, Loader2, AlertCircle, CheckCircle2, XCircle } from 'lucide-react';
 import SectionCard from '@/components/dashboard/v2/SectionCard';
 import { DEFAULT_SPEND_POLICY, USDC_MINOR_UNITS } from '@/lib/domain/constants';
 import { formatUsdc } from '@/lib/domain/money';
@@ -23,7 +23,6 @@ type PactsResp = {
 };
 
 type CawStatus = {
-  runtime?: { faucetTokenId?: string };
   app?: { activeAuthorization?: boolean };
   authorization?: { expiresAt?: string; remainingUsdcMinor?: number };
 };
@@ -49,42 +48,33 @@ type AuthResp = {
   error?: string;
 };
 
-const DEFAULT_LIMITS: { singleLimitUsdcMinor: number; dailyLimitUsdcMinor: number; monthlyLimitUsdcMinor: number; validDays: number } = {
+const DEFAULT_LIMITS = {
   singleLimitUsdcMinor: DEFAULT_SPEND_POLICY.singleLimitUsdcMinor,
   dailyLimitUsdcMinor: DEFAULT_SPEND_POLICY.dailyLimitUsdcMinor,
   monthlyLimitUsdcMinor: DEFAULT_SPEND_POLICY.monthlyLimitUsdcMinor,
-  validDays: DEFAULT_SPEND_POLICY.validDays,
+  validDays: DEFAULT_SPEND_POLICY.validDays as number,
 };
 
 /**
- * 区块 5：Pact 授权状态
+ * Pact 授权状态
  * - 活跃 Pact 数量
  * - Base USDC Pact 状态（就绪 / 缺少）
  * - Pact 列表：tx 剩余 / 过期时间
  * - Pact 参数配置：4 个输入
- * - 5 按钮：领取测试币 / 生成 Pact 计划 / 提交 Pact / 刷新 Pact / 刷新 Authorization / 授权 USDC
+ * - 4 按钮：生成 Pact 计划 / 提交 Pact / 刷新 Authorization / 授权 USDC
  * - Pact 预览：Intent / 起草来源 / 原始意图 / 执行计划 / 校验提示
- *
- * 数据源：
- *   GET  /api/wallet/caw/pacts
- *   POST /api/wallet/caw/faucet
- *   POST /api/wallet/caw/authorization (previewOnly=true/false)
- *   POST /api/wallet/caw/authorization/refresh
- *   POST /api/wallet/caw/approve
  */
 export default function PactAuthorization({ onAfterAction }: { onAfterAction?: () => void }) {
   const [pacts, setPacts] = useState<PactsResp | null>(null);
   const [cawStatus, setCawStatus] = useState<CawStatus | null>(null);
   const [preview, setPreview] = useState<PactPreview | null>(null);
-  const [busy, setBusy] = useState<'faucet' | 'preview' | 'submit' | 'refreshAuth' | 'approve' | null>(null);
+  const [busy, setBusy] = useState<'preview' | 'submit' | 'refreshAuth' | 'approve' | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
 
   // Pact 参数
   const [intent, setIntent] = useState('Allow CAW to spend USDC on Base for CreditsPayment and Venice x402 top-ups.');
   const [limits, setLimits] = useState(DEFAULT_LIMITS);
-
-  // 授权 USDC 数量（默认 1 USDC，用 USDC_MINOR_UNITS 而不是硬编 1_000_000）
   const [approveAmount, setApproveAmount] = useState(USDC_MINOR_UNITS);
 
   useEffect(() => {
@@ -117,29 +107,6 @@ export default function PactAuthorization({ onAfterAction }: { onAfterAction?: (
       cancelled = true;
     };
   }, []);
-
-  async function handleFaucet() {
-    setBusy('faucet');
-    setError(null);
-    setSuccessMsg(null);
-    try {
-      const res = await fetch('/api/wallet/caw/faucet', {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ tokenId: cawStatus?.runtime?.faucetTokenId }),
-      });
-      const data = await res.json();
-      if (!res.ok) {
-        throw new Error(typeof data?.error === 'string' ? data.error : `HTTP ${res.status}`);
-      }
-      setSuccessMsg('测试币申请已提交');
-      onAfterAction?.();
-    } catch (e) {
-      setError(e instanceof Error ? e.message : '请求失败');
-    } finally {
-      setBusy(null);
-    }
-  }
 
   async function handlePreview() {
     setBusy('preview');
@@ -243,7 +210,7 @@ export default function PactAuthorization({ onAfterAction }: { onAfterAction?: (
     }
   }
 
-  const activePacts = pacts?.pacts?.filter((p) => p.status === 'active') ?? [];
+  const activePacts = pacts?.pacts?.filter((p: Pact) => p.status === 'active') ?? [];
   const hasBaseUsdc = pacts?.hasBaseUsdcPact === true;
 
   return (
@@ -377,18 +344,10 @@ export default function PactAuthorization({ onAfterAction }: { onAfterAction?: (
           </div>
         </div>
 
-        {/* 5 按钮 */}
+        {/* 4 按钮 */}
         <div className="border-t border-gray-100 pt-4">
           <p className="text-xs font-medium text-gray-600 mb-2">操作</p>
           <div className="flex flex-wrap gap-2">
-            <button
-              onClick={handleFaucet}
-              disabled={busy !== null}
-              className="inline-flex items-center gap-1.5 rounded-lg border border-gray-300 bg-white px-3 py-1.5 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-            >
-              {busy === 'faucet' ? <Loader2 className="w-4 h-4 animate-spin" /> : <Coins className="w-4 h-4" />}
-              领取测试币
-            </button>
             <button
               onClick={handlePreview}
               disabled={busy !== null}

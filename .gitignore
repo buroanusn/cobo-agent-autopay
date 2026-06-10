@@ -13,3 +13,5 @@ pnpm-debug.log*
 *.tsbuildinfo
 .idea/
 .caw-cli-homes/
+.DS_Store
+prisma/dev.db
