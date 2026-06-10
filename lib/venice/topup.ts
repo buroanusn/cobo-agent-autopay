@@ -8,11 +8,10 @@
 // credits the corresponding balance. No Venice API key required for the credit
 // balance side; SIWE auth is bypassed because payment itself proves identity.
 
-import { spawn } from "node:child_process";
 import { getCawRuntimeStatus } from "@/lib/caw/gateway";
+import { runCawFetchX402 } from "@/lib/caw/cli";
 import { getCreditRepository } from "@/lib/store";
 import { createInferenceLog } from "@/lib/store/venice";
-import { nowIso } from "@/lib/store/memory";
 
 // ── Payment lock ──────────────────────────────────────────────────────────
 export type PaymentLockState = 'idle' | 'processing' | 'cooldown';
@@ -100,33 +99,6 @@ export function pickBaseUsdcAccept(reqs: X402PaymentRequirementV2) {
 // Alias for remote wiki branch import
 export const pickVeniceBaseUsdcAccept = pickBaseUsdcAccept;
 
-function runCawFetch(pactId: string, url: string, body: object): Promise<{ stdout: string; stderr: string; exitCode: number }> {
-  return new Promise((resolve, reject) => {
-    const args = [
-      "fetch",
-      pactId,
-      url,
-      "--method", "POST",
-      "--json", JSON.stringify(body),
-      "--protocol", "x402",
-      "--max-amount", "1000000000", // 1000 USDC cap; dashboard enforces real cap
-      "--network", "eip155:8453", // base mainnet by default
-      "--output", "full",
-      "--timeout", "60"
-    ];
-    const child = spawn("caw", args, {
-      env: { ...process.env, NODE_TLS_REJECT_UNAUTHORIZED: "0" },
-      stdio: ["ignore", "pipe", "pipe"]
-    });
-    let stdout = "";
-    let stderr = "";
-    child.stdout.on("data", (b) => (stdout += b.toString()));
-    child.stderr.on("data", (b) => (stderr += b.toString()));
-    child.on("error", reject);
-    child.on("close", (code) => resolve({ stdout, stderr, exitCode: code ?? 1 }));
-  });
-}
-
 export async function runVeniceX402Topup(input: {
   userId: string;
   walletAddress: string;
@@ -149,7 +121,7 @@ export async function runVeniceX402Topup(input: {
 
   const start = Date.now();
   // Sanity checks
-  const runtime = await getCawRuntimeStatus();
+  const runtime = await getCawRuntimeStatus({ userId: input.userId });
   if (runtime.mode !== "http") {
     setLock('idle');
     throw new Error("Venice x402 top-up requires real CAW mode (CAW_MODE=http).");
@@ -168,9 +140,16 @@ export async function runVeniceX402Topup(input: {
   const url = `${getVeniceBaseUrl()}${VENICE_X402_TOPUP_PATH}`;
   const body = { usdAmount: input.usdAmount, minorUnits: usdcMinor };
 
-  let result: Awaited<ReturnType<typeof runCawFetch>>;
+  let result: Awaited<ReturnType<typeof runCawFetchX402>>;
   try {
-    result = await runCawFetch(input.pactId, url, body);
+    result = await runCawFetchX402({
+      userId: input.userId,
+      pactId: input.pactId,
+      url,
+      body,
+      network: "eip155:8453",
+      maxAmountMinor: 1_000_000_000
+    });
   } catch (error) {
     setLock('idle');
     throw error;

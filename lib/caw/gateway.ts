@@ -1,4 +1,5 @@
 import { getConfiguredCawChainId, getConfiguredChain } from "@/lib/domain/constants";
+import { getCawCliRuntimeStatus } from "@/lib/caw/cli";
 import {
   Configuration,
   FaucetApi,
@@ -542,9 +543,17 @@ export function createCawGateway(): CawGateway {
 }
 
 export async function getCawRuntimeStatus(input: {
+  userId?: string;
   walletId?: string;
   useDefaultWallet?: boolean;
 } = {}): Promise<CawRuntimeStatus> {
+  if (input.userId) {
+    return getCawCliRuntimeStatus({
+      userId: input.userId,
+      walletId: input.walletId
+    });
+  }
+
   const mode = getConfiguredCawMode();
   const apiUrl = process.env.AGENT_WALLET_API_URL || process.env.CAW_API_BASE_URL || "";
   const apiKey = process.env.AGENT_WALLET_API_KEY || process.env.CAW_API_KEY || "";

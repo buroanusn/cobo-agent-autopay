@@ -255,9 +255,11 @@ CawRuntimeCredential
    - 当前 heartbeat 仍偏 demo user。
    - 需要改为扫描所有 `autoTopupEnabled=true` 且有 active `venice_x402` Pact 的用户/Agent。
 
-4. **x402 执行还需要彻底改成用户级 CAW profile**
-   - `runVeniceX402Topup()` 不应使用默认 `spawn("caw", ...)`。
-   - 应复用 `runCawFetchX402({ userId, pactId, ... })`，确保 CLI 使用 `.caw-cli-homes/<userId>`。
+4. **x402 执行已完成最简用户级 CAW profile 隔离，待实机验证**
+   - `lib/caw/cli.ts` 已提供用户级 CAW CLI helper，默认使用 `.caw-cli-homes/<userId>`。
+   - `discover`、`pacts`、`runtime-config` 路由已切到当前登录用户的 CAW_HOME。
+   - `runVeniceX402Topup()` 已改为复用 `runCawFetchX402({ userId, pactId, ... })`，不再直接使用全局 `spawn("caw")`。
+   - 后续验证重点: A/B 用户分别登录后，wallet list、pact list、Venice x402 top-up 都只使用各自 `.caw-cli-homes/<userId>`。
 
 5. **支付结果记录还不完整**
    - 当前还没有 Venice x402 独立订单模型。
@@ -273,7 +275,7 @@ CawRuntimeCredential
 2. 绑定成功后强引导创建 `venice_x402` Pact。
 3. 实现 Pact 审批状态轮询，保存 active authorization。
 4. 新增 `VeniceTopupOrder`。
-5. 把 `runVeniceX402Topup()` 改为用户级 `runCawFetchX402()`。
+5. 实机验证 `runVeniceX402Topup()` 用户级 `runCawFetchX402()` 路径。
 6. heartbeat 改为扫描启用自动充值的用户/Agent。
 7. 余额不足时创建订单并执行 x402。
 8. 成功后刷新 Venice balance，失败时记录结构化原因。
