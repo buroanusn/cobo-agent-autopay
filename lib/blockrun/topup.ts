@@ -20,10 +20,11 @@ const DEFAULT_MODEL = "openai/gpt-oss-20b";
 // ── 解析运行模式 ──────────────────────────────────────────────────────────
 function getBlockRunConfig() {
   return {
-    baseUrl: process.env.BLOCKRUN_USE_TESTNET === "true" ? TESTNET_URL : PRODUCTION_URL,
+    // 默认走测试网，仅当显式设为 false 时走主网
+    baseUrl: process.env.BLOCKRUN_USE_TESTNET === "false" ? PRODUCTION_URL : TESTNET_URL,
     model: process.env.BLOCKRUN_MODEL || DEFAULT_MODEL,
     minBalance: Number(process.env.BLOCKRUN_MIN_BALANCE ?? 5),
-    network: process.env.BLOCKRUN_USE_TESTNET === "true" ? "eip155:84532" : "eip155:8453",
+    network: process.env.BLOCKRUN_USE_TESTNET === "false" ? "eip155:8453" : "eip155:84532",
   };
 }
 
@@ -43,7 +44,7 @@ function runCawFetch(
       "--json", JSON.stringify(body),
       "--protocol", "x402",
       "--max-amount", "1000000000", // 1000 USDC cap
-      "--network", network ?? "eip155:8453",
+      "--network", network ?? "eip155:84532",
       "--output", "full",
       "--timeout", "60",
     ];

@@ -7,8 +7,8 @@ let config: {
   minBalance: number;
 } = {
   model: process.env.BLOCKRUN_MODEL || 'openai/gpt-oss-20b',
-  useTestnet: process.env.BLOCKRUN_USE_TESTNET === 'true',
-  minBalance: Number(process.env.BLOCKRUN_MIN_BLANCE ?? 5),
+  useTestnet: process.env.BLOCKRUN_USE_TESTNET !== 'false',
+  minBalance: Number(process.env.BLOCKRUN_MIN_BALANCE ?? 5),
 };
 
 export async function GET() {
