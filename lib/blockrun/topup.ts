@@ -10,7 +10,7 @@
 
 import { spawn } from "node:child_process";
 import { getCreditRepository } from "@/lib/store";
-import { createInferenceLog } from "@/lib/store/venice";
+import type { BlockRunX402Request, BlockRunX402Result, BlockRunX402Step } from "@/lib/blockrun/types";
 
 // ── 常量 ──────────────────────────────────────────────────────────────────
 const PRODUCTION_URL = "https://blockrun.ai/api/v1/chat/completions";
@@ -88,14 +88,6 @@ export type BlockRunMessage = {
   content: string;
 };
 
-export type BlockRunTopupResult = {
-  status: "completed" | "failed";
-  responseStatus: number;
-  responseBody: string;
-  durationMs: number;
-  error?: string;
-};
-
 export async function runBlockRunX402Inference(input: {
   userId: string;
   walletAddress: string;
@@ -103,7 +95,7 @@ export async function runBlockRunX402Inference(input: {
   model?: string;
   messages: BlockRunMessage[];
   usdAmount?: number; // 愿意支付的最高金额，默认 0.01
-}): Promise<BlockRunTopupResult> {
+}): Promise<BlockRunX402Result> {
   const config = getBlockRunConfig();
   const start = Date.now();
   const model = input.model ?? config.model;
@@ -126,38 +118,84 @@ export async function runBlockRunX402Inference(input: {
     return {
       status: "failed",
       responseStatus: 0,
-      responseBody: "",
       durationMs: Date.now() - start,
       error: error instanceof Error ? error.message : "caw fetch failed",
+      steps: {
+        received402: false,
+        signed: null,
+        txHash: null,
+        gotResult: false,
+      },
     };
   }
   const durationMs = Date.now() - start;
 
-  // 3. 解析响应状态码
-  const statusLine = result.stdout.split("\n")[0]?.trim() ?? "";
+  // 3. 解析 caw fetch stdout 提取状态
+  // caw fetch --output full 的输出格式大致为：
+  // 第1行: HTTP/2 402 或 HTTP/2 200
+  // 中间包含 x402 challenge、签名、交易hash等信息
+  const stdout = result.stdout;
+  const stderr = result.stderr;
+
+  // 状态码
+  const statusLine = stdout.split("\n")[0]?.trim() ?? "";
   const statusMatch = statusLine.match(/\b(\d{3})\b/);
   const responseStatus = statusMatch ? Number(statusMatch[1]) : 0;
   const success = responseStatus >= 200 && responseStatus < 300;
 
-  // 4. 记录日志（复用 Venice 的 inference log 表）
-  createInferenceLog({
-    userId: input.userId,
-    prompt: `BlockRun x402 inference: ${model} / ${input.messages.length} messages`,
-    model: `blockrun-${model}`,
-    response: result.stdout.slice(0, 2000),
-    inputTokens: null,
-    outputTokens: null,
-    status: success ? "completed" : "failed",
-    errorMessage: success ? undefined : (result.stderr || result.stdout).slice(0, 1000),
-    durationMs,
-  });
+  // 解析 steps
+  const steps: BlockRunX402Step = {
+    received402: responseStatus === 402 || stderr.includes("402") || stdout.includes("402"),
+    signed: null,
+    txHash: null,
+    gotResult: success,
+  };
+
+  // 尝试从 stdout/stderr 中提取价格
+  const priceMatch = stdout.match(/"amount"\s*:\s*"([^"]+)"/);
+  if (priceMatch) {
+    steps.price = `${priceMatch[1]} USD`;
+  }
+
+  // 尝试提取 tx hash (caw fetch 一般输出 tx hash 在日志中)
+  const txHashMatch = stdout.match(/0x[a-fA-F0-9]{64}/);
+  if (txHashMatch) {
+    steps.txHash = txHashMatch[0];
+    steps.signed = true;
+  }
+
+  // 如果返回了推理结果，说明签名必然成功了
+  if (success) {
+    steps.signed = true;
+  }
 
   return {
     status: success ? "completed" : "failed",
     responseStatus,
-    responseBody: result.stdout,
+    responseBody: stdout,
     durationMs,
-    error: success ? undefined : result.stderr.slice(0, 500),
+    error: success ? undefined : (stderr || stdout).slice(0, 500),
+    steps,
+  };
+}
+
+// ── 获取 BlockRun Pact 及配置 ─────────────────────────────────────────────
+// 从数据库读取用户的 BlockRun x402 授权信息
+
+export async function getBlockRunX402Request(userId: string): Promise<BlockRunX402Request> {
+  const repo = getCreditRepository();
+  const user = await repo.requireUser(userId);
+  if (!user.cawWalletAddress) {
+    throw new Error("Connect a CAW wallet first.");
+  }
+  const auth = await repo.getActiveAuthorization(userId, "blockrun_x402");
+  if (!auth || auth.status !== "active") {
+    throw new Error("未找到 BlockRun 的 Pact 授权，请先在 BlockRun 页面创建测试网 Pact");
+  }
+  return {
+    walletAddress: user.cawWalletAddress,
+    pactId: auth.pactId,
+    usdAmount: 0.01,
   };
 }
 

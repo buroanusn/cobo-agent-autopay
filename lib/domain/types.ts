@@ -4,7 +4,7 @@ export type CawAuthorizationStatus =
   | "expired"
   | "revoked";
 
-export type CawAuthorizationPurpose = "credits_payment" | "venice_x402";
+export type CawAuthorizationPurpose = "credits_payment" | "venice_x402" | "blockrun_x402";
 
 export type TopupOrderStatus =
   | "pending_policy"

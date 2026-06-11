@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { addBlockRunLog } from '@/app/api/blockrun/logs-store';
+import type { BlockRunX402Step } from '@/lib/blockrun/types';
 
 export async function POST(req: NextRequest) {
   const start = Date.now();
@@ -14,25 +15,38 @@ export async function POST(req: NextRequest) {
 
     const modelToUse = model || process.env.BLOCKRUN_MODEL || 'openai/gpt-oss-20b';
 
-    const messages = [{ role: 'user', content: prompt }];
-
     try {
-      // Import dynamically to avoid server-side issues
-      const { runBlockRunX402Inference } = await import('@/lib/blockrun/topup');
+      // Import dynamically to avoid server-side modules not found
+      const { runBlockRunX402Inference, getBlockRunX402Request, getBlockRunConfigInfo } = await import('@/lib/blockrun/topup');
 
-      // We need a pactId - use a reasonable default or read from env
-      const pactId = process.env.CAW_PACT_ID || 'default';
+      // Get pact info from database
+      let pactId: string;
+      let walletAddress: string;
+      let pactNetwork: string;
+      try {
+        const request = await getBlockRunX402Request('api');
+        pactId = request.pactId;
+        walletAddress = request.walletAddress;
+      } catch {
+        // No pact found — can still run for test purposes
+        pactId = '__no_pact__';
+        walletAddress = '0x0000000000000000000000000000000000000000';
+      }
+
+      const configInfo = getBlockRunConfigInfo();
+      pactNetwork = configInfo.network;
 
       const result = await runBlockRunX402Inference({
         userId: 'api',
-        walletAddress: process.env.CAW_WALLET_ADDRESS || '0x0000000000000000000000000000000000000000',
+        walletAddress,
         pactId,
         model: modelToUse,
-        messages: messages as any,
+        messages: [{ role: 'user', content: prompt }] as any,
         usdAmount: 0.01,
       });
 
       const durationMs = Date.now() - start;
+      const hasSteps = result.steps !== undefined;
 
       if (result.status === 'completed' && result.responseStatus >= 200 && result.responseStatus < 300) {
         // Try to extract the actual response content
@@ -50,7 +64,7 @@ export async function POST(req: NextRequest) {
           prompt,
           model: modelToUse,
           durationMs,
-          costUsdc: 0.001, // Fixed cost for x402 inference
+          costUsdc: 0.001,
           status: 'completed',
         });
 
@@ -59,6 +73,9 @@ export async function POST(req: NextRequest) {
           result: resultText,
           costUsdc: 0.001,
           duration: durationMs,
+          pactId: pactId === '__no_pact__' ? null : pactId.slice(0, 8) + '...',
+          pactNetwork,
+          steps: result.steps,
         });
       } else {
         await addBlockRunLog({
@@ -73,7 +90,10 @@ export async function POST(req: NextRequest) {
           ok: false,
           error: result.error || `x402 returned HTTP ${result.responseStatus}`,
           duration: durationMs,
-        }, { status: 502 });
+          pactId: pactId === '__no_pact__' ? null : pactId.slice(0, 8) + '...',
+          pactNetwork,
+          steps: result.steps,
+        });
       }
     } catch (e) {
       const durationMs = Date.now() - start;
@@ -89,6 +109,12 @@ export async function POST(req: NextRequest) {
         ok: false,
         error: e instanceof Error ? e.message : 'Inference failed',
         duration: durationMs,
+        steps: {
+          received402: false,
+          signed: null,
+          txHash: null,
+          gotResult: false,
+        } as BlockRunX402Step,
       }, { status: 500 });
     }
   } catch {
