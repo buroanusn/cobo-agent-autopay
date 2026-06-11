@@ -1,4 +1,6 @@
 import { NextResponse } from 'next/server';
+import { requireCurrentUser } from '@/lib/auth/session';
+import { runCawCli } from '@/lib/caw/cli';
 
 // Track balance fetch time for display
 let lastFetchedAt: string | null = null;
@@ -21,6 +23,7 @@ function parseUsdcBalance(stdout: string): number {
 }
 
 export async function GET() {
+  const user = await requireCurrentUser();
   // In mock mode or if CAW is not available, return mock data
   const cawMode = process.env.CAW_MODE || 'mock';
 
@@ -28,26 +31,12 @@ export async function GET() {
 
   if (cawMode === 'http') {
     try {
-      const { spawn } = await import('node:child_process');
-      const child = spawn('caw', ['wallet', 'balance'], {
-        env: { ...process.env, NODE_TLS_REJECT_UNAUTHORIZED: '0' },
-        stdio: ['ignore', 'pipe', 'pipe'],
-      });
-
-      const stdout = await new Promise<string>((resolve, reject) => {
-        let out = '';
-        let err = '';
-        child.stdout.on('data', (b: Buffer) => (out += b.toString()));
-        child.stderr.on('data', (b: Buffer) => (err += b.toString()));
-        child.on('error', reject);
-        child.on('close', (code) => {
-          if (code === 0) resolve(out);
-          else reject(new Error(err || `exit code ${code}`));
-        });
-      });
-
-      balanceUsdc = parseUsdcBalance(stdout);
-    } catch (e) {
+      const result = await runCawCli(user.id, ['wallet', 'balance']);
+      if (result.exitCode !== 0) {
+        throw new Error(result.stderr || `exit code ${result.exitCode}`);
+      }
+      balanceUsdc = parseUsdcBalance(result.stdout);
+    } catch {
       // If caw command fails, fall back to mock
       balanceUsdc = Math.random() * 20;
     }

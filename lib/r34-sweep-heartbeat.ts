@@ -94,12 +94,10 @@ function getState(): R34SweepHeartbeatState {
 // BlockRun 和 Venice 不同：BlockRun 是实时扣款，每次推理直接从 CAW 钱包扣 USDC。
 // 这里监控 CAW 钱包 USDC 余额，低于阈值时仅告警（不自动充值）。
 //
-// 通过 `caw wallet balance` 命令读取链上 USDC 余额。
-// 如果 caw CLI 不支持，则回退到 viem 直接读链上。
+// 后台任务没有登录用户上下文，只读取显式配置的钱包地址。
 
 import { createPublicClient, http as viemHttp, formatUnits } from "viem";
 import { base, baseSepolia } from "viem/chains";
-import { spawn } from "node:child_process";
 
 type BlockRunBalanceState = {
   usdBalance: number;
@@ -125,38 +123,7 @@ function getBlockRunBalanceState(): BlockRunBalanceState {
 }
 
 async function readCawWalletUsdcBalance(): Promise<number | null> {
-  // 优先用 `caw wallet balance` 命令
-  try {
-    const proc = await new Promise<{ stdout: string; stderr: string; code: number }>((resolve) => {
-      const child = spawn("caw", ["wallet", "balance", "--token", "USDC", "--chain", "base"], {
-        env: { ...process.env, NODE_TLS_REJECT_UNAUTHORIZED: "0" },
-        stdio: ["ignore", "pipe", "pipe"],
-      });
-      let stdout = "", stderr = "";
-      child.stdout.on("data", (b: Buffer) => (stdout += b.toString()));
-      child.stderr.on("data", (b: Buffer) => (stderr += b.toString()));
-      child.on("close", (code: number | null) => resolve({ stdout, stderr, code: code ?? 1 }));
-    });
-
-    // Try to parse balance from caw output
-    const output = (proc.stdout || proc.stderr).trim();
-    const match = output.match(/(\d+\.?\d*)\s*USDC/i);
-    if (match) {
-      return Number(match[1]);
-    }
-    // Some caw versions return JSON
-    try {
-      const json = JSON.parse(output);
-      const bal = json.balance ?? json.usdcBalance ?? json.amount;
-      if (bal !== undefined) return Number(bal);
-    } catch {
-      // not JSON
-    }
-  } catch {
-    // caw command not available — fall through to viem
-  }
-
-  // 回退：用 viem 直接读链上 USDC 余额
+  // 用 viem 直接读显式配置钱包的链上 USDC 余额，避免使用默认 CAW profile。
   try {
     const isTestnet = process.env.BLOCKRUN_USE_TESTNET === "true";
     const chain = isTestnet ? baseSepolia : base;

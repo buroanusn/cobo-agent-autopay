@@ -43,6 +43,7 @@ export async function POST(request: NextRequest) {
     const uri = body.uri ?? "https://api.venice.ai/api/v1/chat/completions";
 
     const payload = await signSiweXWithCaw({
+      userId: user.id,
       pactId: auth.pactId,
       chainId,
       walletAddress,
