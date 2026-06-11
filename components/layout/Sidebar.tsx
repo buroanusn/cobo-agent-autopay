@@ -2,12 +2,14 @@
 
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { LayoutDashboard, Wallet, Sparkles, CreditCard, Settings, LogOut, FileText, ShieldCheck } from 'lucide-react';
+<<<<<<< HEAD
+import { LayoutDashboard, Wallet, Sparkles, CreditCard, Settings, LogOut, Zap, FileText, ShieldCheck } from 'lucide-react';
 
 const navItems = [
   { label: '工作台', href: '/dashboard', icon: LayoutDashboard, ready: true },
   { label: '钱包', href: '/dashboard/wallet', icon: Wallet, ready: true },
   { label: 'Venice.ai', href: '/dashboard/venice', icon: Sparkles, ready: true },
+  { label: 'BlockRun', href: '/dashboard/blockrun', icon: Zap, ready: true },
   { label: '支付', href: '/dashboard/payments', icon: CreditCard, ready: true },
   { label: '协议', href: '/dashboard/pact', icon: FileText, ready: true },
   { label: 'Guardrails', href: '/dashboard/guardrails', icon: ShieldCheck, ready: true },
