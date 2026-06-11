@@ -2,7 +2,6 @@
 
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-<<<<<<< HEAD
 import { LayoutDashboard, Wallet, Sparkles, CreditCard, Settings, LogOut, Zap, FileText, ShieldCheck } from 'lucide-react';
 
 const navItems = [

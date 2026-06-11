@@ -57,7 +57,7 @@ const VENICE_X402_TOPUP_PATH = "/api/v1/x402/top-up";
 export type VeniceX402Accept = {
   protocol: "x402";
   version: 2;
-  network: "eip155:8453" | "solana" | string;
+  network: "BASE_ETH" | "solana" | string;
   asset: string;
   amount: string;
   maxAmountRequired?: string;
@@ -91,7 +91,7 @@ export async function discoverVeniceX402Requirements(): Promise<X402PaymentRequi
 }
 
 export function pickBaseUsdcAccept(reqs: X402PaymentRequirementV2) {
-  const base = reqs.accepts.find((a) => a.network === "eip155:8453" || a.network === "base");
+  const base = reqs.accepts.find((a) => a.network === "BASE_ETH" || a.network === "base");
   if (base) return base;
   // Fallback: any USDC option
   const usdc = reqs.accepts.find((a) => a.asset?.toUpperCase().includes("USDC"));
@@ -110,7 +110,7 @@ function runCawFetch(pactId: string, url: string, body: object): Promise<{ stdou
       "--json", JSON.stringify(body),
       "--protocol", "x402",
       "--max-amount", "1000000000", // 1000 USDC cap; dashboard enforces real cap
-      "--network", "eip155:8453", // base mainnet by default
+      "--network", "BASE_ETH", // base mainnet by default
       "--output", "full",
       "--timeout", "60"
     ];

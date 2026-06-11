@@ -4,7 +4,6 @@ import AppLayout from '@/components/layout/AppLayout';
 import AgentSelector from '@/components/dashboard/v2/AgentSelector';
 import CawMobilePairing from '@/components/wallet/v2/CawMobilePairing';
 import CawWalletBinding from '@/components/wallet/v2/CawWalletBinding';
-import PactAuthorization from '@/components/wallet/v2/PactAuthorization';
 
 export default function WalletPage() {
   return (
@@ -21,8 +20,7 @@ export default function WalletPage() {
           <CawWalletBinding />
         </div>
 
-        {/* Pact 授权 */}
-        <PactAuthorization />
+        {/* Pact 授权已移至 /dashboard/pact 统一管理 */}
       </div>
     </AppLayout>
   );
