@@ -25,7 +25,7 @@ type SaveStatus = 'idle' | 'saving' | 'saved' | 'error';
 export default function VeniceApiKey() {
   const [config, setConfig] = useState<ConfigResp | null>(null);
   const [apiKey, setApiKey] = useState('');
-  const [model, setModel] = useState('llama-3.3-70b');
+  const [model, setModel] = useState('deepseek-v4-pro');
   const [loading, setLoading] = useState(true);
   const [saveStatus, setSaveStatus] = useState<SaveStatus>('idle');
   const [loadError, setLoadError] = useState<string | null>(null);

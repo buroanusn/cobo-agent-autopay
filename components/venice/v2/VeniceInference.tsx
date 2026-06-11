@@ -32,10 +32,11 @@ type InferenceLog = {
   prompt: string;
   model: string;
   createdAt: string;
-  status: 'completed' | 'failed_insufficient_balance';
+  status: 'completed' | 'failed' | 'failed_insufficient_balance';
   creditsCharged: number;
   inputTokens?: number;
   outputTokens?: number;
+  errorMessage?: string;
 };
 
 type LogsResp = { ok?: boolean; logs?: InferenceLog[]; error?: string };
@@ -293,6 +294,11 @@ export default function VeniceInference() {
                   </span>
                   <div className="min-w-0 flex-1">
                     <p className="text-xs text-gray-700 truncate">{l.prompt}</p>
+                    {l.errorMessage && l.status !== 'completed' && (
+                      <p className="text-[11px] text-red-600 mt-0.5 truncate" title={l.errorMessage}>
+                        {l.errorMessage}
+                      </p>
+                    )}
                     <p className="text-[11px] text-gray-500 mt-0.5">
                       {l.model} · 扣 {l.creditsCharged} 积分
                       {(l.inputTokens || l.outputTokens) && (

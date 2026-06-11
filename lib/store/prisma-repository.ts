@@ -178,7 +178,7 @@ export const prismaRepository: CreditRepository = {
   },
   async findUserByCoboId(coboId: string): Promise<User | undefined> {
     const user = await prisma.user.findFirst({
-      where: { coboId: { equals: coboId, mode: "insensitive" } }
+      where: { coboId: { equals: coboId.toLowerCase() } }
     });
     return user ? mapUser(user) : undefined;
   },
@@ -188,7 +188,7 @@ export const prismaRepository: CreditRepository = {
   },
   async findUserByCawWalletAddress(walletAddress: string): Promise<User | undefined> {
     const user = await prisma.user.findFirst({
-      where: { cawWalletAddress: { equals: walletAddress, mode: "insensitive" } }
+      where: { cawWalletAddress: { equals: walletAddress.toLowerCase() } }
     });
     return user ? mapUser(user) : undefined;
   },
@@ -320,7 +320,7 @@ export const prismaRepository: CreditRepository = {
         phase: session.phase,
         walletStatus: session.walletStatus,
         needsInput: session.needsInput,
-        prompts: session.prompts,
+        prompts: JSON.stringify(session.prompts ?? []),
         nextAction: session.nextAction,
         lastError: session.lastError,
         agentName: session.agentName,
@@ -337,7 +337,7 @@ export const prismaRepository: CreditRepository = {
         phase: session.phase,
         walletStatus: session.walletStatus,
         needsInput: session.needsInput,
-        prompts: session.prompts,
+        prompts: JSON.stringify(session.prompts ?? []),
         nextAction: session.nextAction,
         lastError: session.lastError,
         agentName: session.agentName,
@@ -457,8 +457,7 @@ export const prismaRepository: CreditRepository = {
       where: {
         userId: input.userId,
         txHash: {
-          equals: input.txHash,
-          mode: "insensitive"
+          equals: input.txHash.toLowerCase()
         }
       },
       orderBy: {
@@ -651,10 +650,19 @@ function mapCawOnboardingSession(session: {
 }
 
 function normalizePromptList(value: unknown): CawOnboardingPrompt[] {
-  if (!Array.isArray(value)) {
+  // Handle JSON string from SQLite
+  let parsed = value;
+  if (typeof value === 'string') {
+    try {
+      parsed = JSON.parse(value);
+    } catch {
+      return [];
+    }
+  }
+  if (!Array.isArray(parsed)) {
     return [];
   }
-  return value
+  return parsed
     .map((entry): CawOnboardingPrompt | undefined => {
       if (typeof entry !== "object" || entry === null) {
         return undefined;
