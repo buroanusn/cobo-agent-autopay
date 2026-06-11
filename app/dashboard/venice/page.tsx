@@ -35,7 +35,7 @@ export default function VenicePage() {
   const triggerReload = () => setReloadKey((k) => k + 1);
 
   return (
-    <AppLayout title="Venice">
+    <AppLayout title="Venice.ai">
       <div className="space-y-6">
         {/* 顶部 Agent 选择器（多 Agent 预留，静态只读） */}
         <div className="flex items-center justify-between">

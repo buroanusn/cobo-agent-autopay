@@ -26,7 +26,7 @@ import RecentPaymentsSection from '@/components/dashboard/v2/RecentPaymentsSecti
  */
 export default function DashboardPage() {
   return (
-    <AppLayout title="Dashboard">
+    <AppLayout title="工作台">
       <div className="space-y-6">
         {/* 顶部 Agent 选择器 */}
         <div className="flex items-center justify-between">
