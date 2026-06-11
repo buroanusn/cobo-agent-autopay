@@ -23,13 +23,18 @@ function parseUsdcBalance(stdout: string): number {
 export async function GET() {
   // In mock mode or if CAW is not available, return mock data
   const cawMode = process.env.CAW_MODE || 'mock';
+  const isTestnet = process.env.BLOCKRUN_USE_TESTNET !== 'false';
 
   let balanceUsdc = 0;
 
   if (cawMode === 'http') {
     try {
       const { spawn } = await import('node:child_process');
-      const child = spawn('caw', ['wallet', 'balance'], {
+      // 测试网要指定 chain-id 查 TBASE_USDC
+      const args = isTestnet
+        ? ['wallet', 'balance', '--chain-id', 'TBASE_SETH']
+        : ['wallet', 'balance'];
+      const child = spawn('caw', args, {
         env: { ...process.env, NODE_TLS_REJECT_UNAUTHORIZED: '0' },
         stdio: ['ignore', 'pipe', 'pipe'],
       });
