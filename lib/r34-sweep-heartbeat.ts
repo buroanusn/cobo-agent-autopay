@@ -197,7 +197,7 @@ async function readCawWalletUsdcBalance(): Promise<number | null> {
     });
 
     // USDC has 6 decimals
-    return Number(formatUnits(balance, 6));
+    return Number(formatUnits(balance as bigint, 6));
   } catch (err) {
     console.warn("[blockrun-balance] viem balance check failed:", err instanceof Error ? err.message : err);
     return null;

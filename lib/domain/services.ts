@@ -1770,11 +1770,11 @@ function buildVeniceX402PactPreview(input: {
       `total spend is capped at ${formatUsdc(input.limits.monthlyLimitUsdcMinor)} USDC while this Pact is valid.`,
     originalIntent:
       `Create a Venice x402 top-up Pact for Base mainnet USDC. ` +
-      `Selected x402 network: eip155:8453. CAW token ID: ${VENICE_USDC_TOKEN_ID}. ` +
+      `Selected x402 network: BASE_ETH. CAW token ID: ${VENICE_USDC_TOKEN_ID}. ` +
       `USDC token: ${usdcAddress}. Venice payTo: ${payTo}.`,
     executionPlan: [
       `- Discover Venice x402 payment requirements from ${getVeniceTopupPathForPreview()} without spending funds.`,
-      `- Select only Base mainnet (eip155:8453) with native USDC (${usdcAddress}).`,
+      `- Select only Base mainnet (BASE_ETH) with native USDC (${usdcAddress}).`,
       `- Execute Venice top-up through CAW CLI x402 with max amount ${input.limits.singleLimitUsdcMinor} minor USDC units.`,
       "- Refuse the payment if Venice requests a different chain, a different asset, or an amount above the configured cap.",
       "- Stop after the Venice API returns a successful top-up response; do not use this Pact for CreditsPayment or other contracts."

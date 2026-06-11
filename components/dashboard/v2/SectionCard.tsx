@@ -3,7 +3,7 @@
 import { Loader2 } from 'lucide-react';
 
 type SectionCardProps = {
-  title: string;
+  title: React.ReactNode;
   subtitle?: string;
   action?: React.ReactNode;
   children: React.ReactNode;

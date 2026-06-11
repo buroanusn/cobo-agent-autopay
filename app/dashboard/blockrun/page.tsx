@@ -2,7 +2,6 @@
 
 import AppLayout from '@/components/layout/AppLayout';
 import BlockRunConfig from '@/components/blockrun/BlockRunConfig';
-import BlockRunPactPanel from '@/components/blockrun/BlockRunPactPanel';
 import BlockRunPaymentTest from '@/components/blockrun/BlockRunPaymentTest';
 import BlockRunBalance from '@/components/blockrun/BlockRunBalance';
 import BlockRunInference from '@/components/blockrun/BlockRunInference';
@@ -15,19 +14,18 @@ export default function BlockRunPage() {
         {/* 区块 1：BlockRun 配置（全宽） */}
         <BlockRunConfig />
 
-        {/* 区块 2：BlockRun Pact 授权（全宽） */}
-        <BlockRunPactPanel />
+        {/* Pact 授权已移至 /dashboard/pact 统一管理 */}
 
-        {/* 区块 3：x402 支付链路测试（全宽） */}
+        {/* 区块 2：x402 支付链路测试（全宽） */}
         <BlockRunPaymentTest />
 
-        {/* 区块 4 + 5 并排 */}
+        {/* 区块 3 + 4 并排 */}
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
           <BlockRunBalance />
           <BlockRunInference />
         </div>
 
-        {/* 区块 6：推理历史日志（全宽） */}
+        {/* 区块 5：推理历史日志（全宽） */}
         <BlockRunLogs />
       </div>
     </AppLayout>

@@ -96,8 +96,8 @@ export default function BlockRunPactPanel() {
   const networkLabel = config?.useTestnet ? '测试网 (Base Sepolia)' : '主网 (Base Mainnet)';
   const isActive = pactStatus?.status === 'active';
   const hasNetworkMismatch = pactStatus?.hasPact && pactStatus?.network &&
-    ((config?.useTestnet && pactStatus.network !== 'eip155:84532') ||
-     (!config?.useTestnet && pactStatus.network !== 'eip155:8453'));
+    ((config?.useTestnet && pactStatus.network !== 'TBASE_SETH') ||
+     (!config?.useTestnet && pactStatus.network !== 'BASE_ETH'));
 
   async function handlePreview() {
     setBusy('preview'); setError(null); setSuccessMsg(null);

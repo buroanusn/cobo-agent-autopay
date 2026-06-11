@@ -27,8 +27,8 @@ async function getCawWallet(userId: string) {
 }
 
 function getNetworkLabel(network: string): string {
-  if (network === "eip155:84532") return "Base Sepolia (testnet)";
-  if (network === "eip155:8453") return "Base Mainnet";
+  if (network === "TBASE_SETH") return "Base Sepolia (testnet)";
+  if (network === "BASE_ETH") return "Base Mainnet";
   return network;
 }
 
@@ -52,7 +52,7 @@ export async function previewBlockRunX402Authorization(input: {
   const config = getBlockRunConfigInfo();
   const network = config.network;
   const networkLabel = getNetworkLabel(network);
-  const isTestnet = network === "eip155:84532";
+  const isTestnet = network === "TBASE_SETH";
 
   const limits: PactLimits = {
     singleLimitUsdcMinor: input.amountUsdcMinor ?? 1_000_000, // 1 USDC

@@ -2,7 +2,7 @@
 //
 // Runs `caw pact list` and returns a sanitized summary list of pacts so
 // the dashboard can show whether the user has any active pacts covering
-// the chains / tokens that Venice x402 needs (Base USDC on eip155:8453).
+// the chains / tokens that Venice x402 needs (Base USDC on BASE_ETH).
 //
 // Currently the user's 3 active pacts are Sepolia-only (single tx up to
 // 0.05 USDC), so the dashboard should surface a "no Base mainnet pact"
@@ -95,7 +95,7 @@ export async function GET(request: Request) {
       };
     });
 
-    // Detect whether any pact covers Base mainnet (chain id eip155:8453)
+    // Detect whether any pact covers Base mainnet (chain id BASE_ETH)
     // and USDC contract 0x833589fcd6edb6e08f4c7c32d4f71b54bda02913.
     // Venice sends those in its 402 challenge; without a matching pact
     // the caw fetch will be denied by policy.
@@ -104,9 +104,9 @@ export async function GET(request: Request) {
       const intent = String(raw.intent ?? "").toLowerCase();
       const name = String(raw.name ?? "").toLowerCase();
       return (
-        intent.includes("eip155:8453") ||
+        intent.includes("BASE_ETH") ||
         intent.includes("0x833589fcd6edb6e08f4c7c32d4f71b54bda02913") ||
-        name.includes("eip155:8453") ||
+        name.includes("BASE_ETH") ||
         name.includes("base")
       );
     });

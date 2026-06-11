@@ -24,7 +24,7 @@ function getBlockRunConfig() {
     baseUrl: process.env.BLOCKRUN_USE_TESTNET === "false" ? PRODUCTION_URL : TESTNET_URL,
     model: process.env.BLOCKRUN_MODEL || DEFAULT_MODEL,
     minBalance: Number(process.env.BLOCKRUN_MIN_BALANCE ?? 5),
-    network: process.env.BLOCKRUN_USE_TESTNET === "false" ? "eip155:8453" : "eip155:84532",
+    network: process.env.BLOCKRUN_USE_TESTNET === "false" ? "BASE_ETH" : "TBASE_SETH",
   };
 }
 
@@ -44,7 +44,7 @@ function runCawFetch(
       "--json", JSON.stringify(body),
       "--protocol", "x402",
       "--max-amount", "1000000000", // 1000 USDC cap
-      "--network", network ?? "eip155:84532",
+      "--network", network ?? "TBASE_SETH",
       "--output", "full",
       "--timeout", "60",
     ];
@@ -119,6 +119,7 @@ export async function runBlockRunX402Inference(input: {
     return {
       status: "failed",
       responseStatus: 0,
+      responseBody: "",
       durationMs: Date.now() - start,
       error: error instanceof Error ? error.message : "caw fetch failed",
       steps: {

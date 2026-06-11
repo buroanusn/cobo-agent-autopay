@@ -17,6 +17,7 @@ enum CawAuthorizationStatus {
 enum CawAuthorizationPurpose {
   credits_payment
   venice_x402
+  blockrun_x402
 }
 
 enum TopupOrderStatus {
