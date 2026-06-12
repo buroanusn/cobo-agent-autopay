@@ -45,25 +45,31 @@
 - `npm run typecheck` 通过。
 - `npm run lint` 通过，无 error；仍有项目既有 unused warning。
 
-### 已记录遗留 bug: 辅助 CAW route 仍有全局 profile/runtime 假设
+### 2026-06-12 追加修复: 多用户辅助入口隔离
 
-核心付款和交易链路已经按用户隔离，但还有几个辅助/调试 route 没有完全产品化:
+在核心付款和交易链路之后，又补齐了几个会影响多用户隔离的辅助入口:
 
 - `app/api/wallet/caw/discover/route.ts`
-  - 当前读取服务器真实 `HOME/.cobo-agentic-wallet` 和全局 `caw wallet list`。
-  - 多用户正式路径应改为读取当前 `user.id` 对应的 CAW home，或明确只作为管理员本机导入工具。
+  - 已改为 `runCawCli(user.id, ["wallet", "list"])`，读取当前用户隔离 CAW home。
 - `app/api/wallet/caw/pacts/route.ts`
-  - 当前 `spawnSync("caw", ["pact", "list", ...])` 使用 `HOME=process.env.HOME`，并读取 `resolveCawRuntimeConfig()`。
-  - 多用户正式路径应改为通过 `runCawCli(user.id, ["pact", "list", ...])` 或 repository 中的当前用户 `caw_authorizations` 展示。
-- `app/api/wallet/caw/runtime-config/route.ts` 和 `lib/caw/runtime-config-store.ts`
-  - 仍是旧 demo runtime-config 路径，会写进程级 `process.env.AGENT_WALLET_*`。
-  - 正式多用户路径应标记为 dev-only、移除，或改成只写当前用户的 `caw_runtime_credentials`。
+  - 已改为 `runCawCli(user.id, ["pact", "list", ...])`，并用当前用户 DB 钱包信息返回 `boundWallet`。
+- `app/api/wallet/caw/runtime-config/route.ts`
+  - 已改为用户级兼容 route，不再写 `process.env.AGENT_WALLET_*`，也不再读全局 HOME。
+  - `GET ?autobind=1` 从当前用户隔离 CAW profile 绑定钱包。
+  - `POST` 通过 `connectCawWallet({ userId, cawWalletId })` 写当前用户 DB 绑定。
+- Venice config/settings/logs
+  - `app/api/config/venice/route.ts` 改为当前用户 API key/model。
+  - `app/api/settings/route.ts` 改为当前用户 threshold，不再写 `process.env.VENICE_BALANCE_THRESHOLD`。
+  - `app/api/venice/logs/route.ts` 只返回当前用户日志。
+- BlockRun heartbeat
+  - 全局钱包自动充值默认 fail-closed，避免用 `CAW_WALLET_ADDRESS` 串用户。
+  - 如需旧 demo 行为，必须显式设置 `BLOCKRUN_ALLOW_GLOBAL_AUTOTOPUP=1`。
 
-修复这些遗留项的验收:
+仍需后续生产加固:
 
-- 普通用户访问钱包发现、Pact 列表、runtime status 时，不读取服务器全局 `~/.cobo-agentic-wallet`。
-- 任何用户级 API 都不因为缺少用户自己的 wallet/profile 而 fallback 到部署默认 wallet。
-- 管理员/demo 导入全局 profile 的能力如果保留，必须在路由名、权限和文档中明确标识为 dev/admin-only。
+- 用户级 Venice config 当前是进程内存 + env fallback，服务重启会丢失；正式产品应落库。
+- `lib/caw/runtime-config-store.ts` 仍作为旧兼容模块存在，但普通业务 route 不应再依赖它。
+- BlockRun heartbeat 的正式版本应扫描 DB 中开启自动充值的用户/Agent，而不是使用全局钱包兼容开关。
 
 ## 最新需求确认
 

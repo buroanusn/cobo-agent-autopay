@@ -173,6 +173,11 @@ async function checkBlockRunBalance(): Promise<void> {
 
       // 自动充值
       if (state.autoTopupEnabled) {
+        if (process.env.BLOCKRUN_ALLOW_GLOBAL_AUTOTOPUP !== "1") {
+          state.lastAutoTopupResult = "skipped_global_autotopup_disabled_for_multi_user";
+          console.log("[blockrun] 全局钱包自动充值已默认禁用；如需旧 demo 行为，设置 BLOCKRUN_ALLOW_GLOBAL_AUTOTOPUP=1");
+          return;
+        }
         console.log("[blockrun] 触发自动充值...");
         try {
           const blockrun = await import("@/lib/blockrun/topup");
