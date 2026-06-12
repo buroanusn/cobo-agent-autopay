@@ -320,6 +320,10 @@ async function checkVeniceBalance(): Promise<void> {
 
     // Below threshold → auto top-up if lock is idle
     if (usdBalance < state.veniceBalanceThreshold && isVeniceAutoTopupEnabled()) {
+      if (process.env.VENICE_ALLOW_DEMO_AUTOTOPUP !== "1") {
+        console.log("[venice-balance] 全局 demo 自动充值已默认禁用；用户级自动支付由 Agent/user 流程触发");
+        return;
+      }
       const topup = await import("@/lib/venice/topup");
       const lockState = topup.getPaymentLockState();
       if (lockState === "idle") {
