@@ -72,19 +72,29 @@ and the configured USDC address.
 
 ## Database Setup
 
-The local setup uses Postgres through Prisma by default. The durable schema is
-defined in `prisma/schema.prisma`; use `STORAGE_DRIVER=prisma` after migrations
-are applied.
+Local demos use SQLite through Prisma by default. Copy the environment template
+and initialize the database:
 
 ```bash
 cp .env.example .env
-npm run db:generate
-npm run db:migrate
+npm run db:init
 ```
 
-Set `DATABASE_URL` to a Postgres database before running migrations.
+Database configuration lives in `.env`:
 
-Use `STORAGE_DRIVER=memory` only for throwaway local development. Real runs should use `STORAGE_DRIVER=prisma`.
+```bash
+DATABASE_URL="file:./dev.db"
+STORAGE_DRIVER=prisma
+```
+
+If your `.env` still has an old Postgres URL, replace it with the SQLite value
+above before running `npm run db:init`.
+
+The SQLite file is created at `prisma/dev.db`. The init script is idempotent: if
+the database already exists and migrations are applied, it keeps the data and
+reports the schema as up to date.
+
+See `docs/database-setup.md` for the fresh-demo-machine checklist.
 
 ## Testnet Mode
 
