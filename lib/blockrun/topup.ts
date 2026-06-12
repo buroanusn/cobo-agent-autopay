@@ -19,12 +19,16 @@ const DEFAULT_MODEL = "openai/gpt-oss-20b";
 
 // ── 解析运行模式 ──────────────────────────────────────────────────────────
 function getBlockRunConfig() {
+  const isTestnet = process.env.BLOCKRUN_USE_TESTNET !== "false";
   return {
     // 默认走测试网，仅当显式设为 false 时走主网
-    baseUrl: process.env.BLOCKRUN_USE_TESTNET === "false" ? PRODUCTION_URL : TESTNET_URL,
+    baseUrl: isTestnet ? TESTNET_URL : PRODUCTION_URL,
     model: process.env.BLOCKRUN_MODEL || DEFAULT_MODEL,
     minBalance: Number(process.env.BLOCKRUN_MIN_BALANCE ?? 5),
-    network: process.env.BLOCKRUN_USE_TESTNET === "false" ? "BASE_ETH" : "TBASE_SETH",
+    // x402 协议用 CAIP-2 格式（BlockRun 服务端要求）
+    network: isTestnet ? "eip155:84532" : "eip155:8453",
+    // CAW Pact 策略用 CAW 内部链名
+    cawChainId: isTestnet ? "TBASE_SETH" : "BASE_ETH",
   };
 }
 
@@ -44,7 +48,7 @@ function runCawFetch(
       "--json", JSON.stringify(body),
       "--protocol", "x402",
       "--max-amount", "1000000000", // 1000 USDC cap
-      "--network", network ?? "TBASE_SETH",
+      "--network", network ?? "eip155:84532",
       "--output", "full",
       "--timeout", "60",
     ];
@@ -207,6 +211,7 @@ export type BlockRunConfigInfo = {
   model: string;
   minBalance: number;
   network: string;
+  cawChainId: string;
 };
 
 export function getBlockRunConfigInfo(): BlockRunConfigInfo {
@@ -216,5 +221,6 @@ export function getBlockRunConfigInfo(): BlockRunConfigInfo {
     model: config.model,
     minBalance: config.minBalance,
     network: config.network,
+    cawChainId: config.cawChainId,
   };
 }

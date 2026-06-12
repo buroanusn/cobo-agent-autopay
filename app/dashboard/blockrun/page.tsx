@@ -6,10 +6,12 @@ import BlockRunPaymentTest from '@/components/blockrun/BlockRunPaymentTest';
 import BlockRunBalance from '@/components/blockrun/BlockRunBalance';
 import BlockRunInference from '@/components/blockrun/BlockRunInference';
 import BlockRunLogs from '@/components/blockrun/BlockRunLogs';
+import BlockRunLowBalanceAlert from '@/components/blockrun/LowBalanceAlert';
 
 export default function BlockRunPage() {
   return (
     <AppLayout title="BlockRun">
+      <BlockRunLowBalanceAlert />
       <div className="space-y-6">
         {/* 区块 1：BlockRun 配置（全宽） */}
         <BlockRunConfig />

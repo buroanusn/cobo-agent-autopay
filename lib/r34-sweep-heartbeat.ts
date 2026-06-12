@@ -35,7 +35,7 @@ const FIRST_TICK_DELAY_MS = 5_000;
 const BALANCE_CHECK_INTERVAL_MS = 60_000; // 60s
 
 // ── Venice balance ────────────────────────────────────────────────────────
-const VENICE_X402_WALLET = "0xaa56c463fd074dbb4f7d02f6902a8ea7841aa67d";
+const VENICE_X402_WALLET = process.env.VENICE_X402_WALLET || "";
 
 function resolveVeniceBalanceThreshold(): number {
   return Number(
@@ -106,6 +106,9 @@ type BlockRunBalanceState = {
   minBalance: number;
   lastCheckAt: string | undefined;
   lastError: string | undefined;
+  lastAutoTopupAt: string | undefined;
+  lastAutoTopupResult: string | undefined;
+  autoTopupEnabled: boolean;
 };
 
 const DEFAULT_BLOCKRUN_MIN_BALANCE = 5;
@@ -119,16 +122,19 @@ function getBlockRunBalanceState(): BlockRunBalanceState {
       minBalance: Number(process.env.BLOCKRUN_MIN_BALANCE ?? DEFAULT_BLOCKRUN_MIN_BALANCE),
       lastCheckAt: undefined,
       lastError: undefined,
+      lastAutoTopupAt: undefined,
+      lastAutoTopupResult: undefined,
+      autoTopupEnabled: process.env.BLOCKRUN_AUTO_TOPUP_ENABLED === "1",
     };
   }
-  return g.__BLOCKRUN_BALANCE_STATE__;
+  return g.__BLOCKRUN_BALANCE_STATE__!;
 }
 
 async function readCawWalletUsdcBalance(): Promise<number | null> {
-  // 优先用 `caw wallet balance` 命令
+  // 优先用 caw wallet balance（CAW 视角的余额）
   try {
     const proc = await new Promise<{ stdout: string; stderr: string; code: number }>((resolve) => {
-      const child = spawn("caw", ["wallet", "balance", "--token", "USDC", "--chain", "base"], {
+      const child = spawn("caw", ["wallet", "balance"], {
         env: { ...process.env, NODE_TLS_REJECT_UNAUTHORIZED: "0" },
         stdio: ["ignore", "pipe", "pipe"],
       });
@@ -138,68 +144,35 @@ async function readCawWalletUsdcBalance(): Promise<number | null> {
       child.on("close", (code: number | null) => resolve({ stdout, stderr, code: code ?? 1 }));
     });
 
-    // Try to parse balance from caw output
     const output = (proc.stdout || proc.stderr).trim();
-    const match = output.match(/(\d+\.?\d*)\s*USDC/i);
-    if (match) {
-      return Number(match[1]);
-    }
-    // Some caw versions return JSON
     try {
       const json = JSON.parse(output);
-      const bal = json.balance ?? json.usdcBalance ?? json.amount;
-      if (bal !== undefined) return Number(bal);
-    } catch {
-      // not JSON
-    }
-  } catch {
-    // caw command not available — fall through to viem
-  }
+      for (const r of json.result || []) {
+        if (r.token_id === "BASE_USDC" || r.token_id === "TBASE_USDC") {
+          return Number(r.amount) || 0;
+        }
+      }
+    } catch {}
+  } catch {}
 
-  // 回退：用 viem 直接读链上 USDC 余额
+  // 回退：用 viem 直接读链上
   try {
-    const isTestnet = process.env.BLOCKRUN_USE_TESTNET === "true";
+    const isTestnet = process.env.BLOCKRUN_USE_TESTNET !== "false";
     const chain = isTestnet ? baseSepolia : base;
-    const client = createPublicClient({
-      chain,
-      transport: viemHttp(),
-    });
-
-    // USDC contract address on Base: 0x833589fCD6eDb6E08f4c7c32D4f71b54bDA02913
-    // Base Sepolia USDC: 0x036CbD53842c5426634e7929541eC2318f3dCF7e
+    const client = createPublicClient({ chain, transport: viemHttp() });
     const usdcAddress = isTestnet
       ? "0x036CbD53842c5426634e7929541eC2318f3dCF7e"
       : "0x833589fCD6eDb6E08f4c7c32D4f71b54bDA02913";
-
-    // ERC-20 balanceOf ABI
-    const abi = [
-      {
-        constant: true,
-        inputs: [{ name: "_owner", type: "address" }],
-        name: "balanceOf",
-        outputs: [{ name: "balance", type: "uint256" }],
-        type: "function",
-      },
-    ] as const;
-
-    // Read wallet address from env
+    const abi = [{ constant: true, inputs: [{ name: "_owner", type: "address" }], name: "balanceOf", outputs: [{ name: "balance", type: "uint256" }], type: "function" }] as const;
     const walletAddress = process.env.BLOCKRUN_WALLET_ADDRESS || process.env.BASE_WALLET_ADDRESS;
     if (!walletAddress) {
       console.warn("[blockrun-balance] BLOCKRUN_WALLET_ADDRESS not set, skipping viem balance check");
       return null;
     }
-
-    const balance = await client.readContract({
-      address: usdcAddress as `0x${string}`,
-      abi,
-      functionName: "balanceOf",
-      args: [walletAddress as `0x${string}`],
-    });
-
-    // USDC has 6 decimals
+    const balance = await client.readContract({ address: usdcAddress as `0x${string}`, abi, functionName: "balanceOf", args: [walletAddress as `0x${string}`] });
     return Number(formatUnits(balance as bigint, 6));
   } catch (err) {
-    console.warn("[blockrun-balance] viem balance check failed:", err instanceof Error ? err.message : err);
+    console.warn("[blockrun-balance] balance check failed:", err instanceof Error ? err.message : err);
     return null;
   }
 }
@@ -207,6 +180,7 @@ async function readCawWalletUsdcBalance(): Promise<number | null> {
 async function checkBlockRunBalance(): Promise<void> {
   const state = getBlockRunBalanceState();
   state.minBalance = Number(process.env.BLOCKRUN_MIN_BALANCE ?? DEFAULT_BLOCKRUN_MIN_BALANCE);
+  state.autoTopupEnabled = process.env.BLOCKRUN_AUTO_TOPUP_ENABLED === "1";
 
   try {
     const balance = await readCawWalletUsdcBalance();
@@ -220,8 +194,87 @@ async function checkBlockRunBalance(): Promise<void> {
 
     if (balance < state.minBalance) {
       console.log(
-        `[blockrun] CAW USDC 余额不足（当前：$${balance.toFixed(2)}，阈值：$${state.minBalance.toFixed(2)}），请手动补充钱包`
+        `[blockrun] CAW USDC 余额不足（当前：$${balance.toFixed(2)}，阈值：$${state.minBalance.toFixed(2)}）`
       );
+
+      // 自动充值
+      if (state.autoTopupEnabled) {
+        console.log("[blockrun] 触发自动充值...");
+        try {
+          const blockrun = await import("@/lib/blockrun/topup");
+          const repo = await import("@/lib/store").then(m => m.getCreditRepository());
+          // 用实际 CAW 钱包地址反查真实用户，不再依赖 DEMO_USER_ID
+          const cawWallet = process.env.CAW_WALLET_ADDRESS || process.env.BLOCKRUN_WALLET_ADDRESS;
+          if (!cawWallet) {
+            state.lastAutoTopupResult = "no_caw_wallet_env";
+            console.log("[blockrun] CAW_WALLET_ADDRESS 未设置，跳过自动充值");
+            return;
+          }
+          const user = await repo.findUserByCawWalletAddress(cawWallet);
+          if (!user) {
+            state.lastAutoTopupResult = "no_user_with_caw_wallet";
+            console.log("[blockrun] 找不到绑定该 CAW 钱包的用户，跳过自动充值");
+            return;
+          }
+
+          if (user.cawWalletAddress) {
+            // 先从数据库找 pact
+            let pactId: string | undefined;
+            const auth = await repo.getActiveAuthorization(user.id, "blockrun_x402");
+            if (auth?.status === "active") {
+              pactId = auth.pactId;
+            }
+
+            // 数据库没有，从 CAW 直接找
+            if (!pactId) {
+              const { spawn } = await import("node:child_process");
+              pactId = await new Promise<string | undefined>((resolve) => {
+                const child = spawn("caw", ["pact", "list"], {
+                  env: { ...process.env, NODE_TLS_REJECT_UNAUTHORIZED: "0" },
+                  stdio: ["ignore", "pipe", "pipe"],
+                });
+                let stdout = "";
+                child.stdout.on("data", (b: Buffer) => (stdout += b.toString()));
+                child.on("close", () => {
+                  try {
+                    const result = JSON.parse(stdout);
+                    for (const p of result.result?.pacts || []) {
+                      if (p.status === "active" && (p.name || "").toLowerCase().includes("blockrun")) {
+                        resolve(p.id);
+                        return;
+                      }
+                    }
+                    resolve(undefined);
+                  } catch { resolve(undefined); }
+                });
+                child.on("error", () => resolve(undefined));
+              });
+            }
+
+            if (pactId) {
+              const result = await blockrun.runBlockRunX402Inference({
+                userId: user.id,
+                walletAddress: user.cawWalletAddress,
+                pactId,
+                messages: [{ role: "user", content: "auto top-up ping" }],
+                usdAmount: 0.01,
+              });
+              state.lastAutoTopupAt = new Date().toISOString();
+              state.lastAutoTopupResult = result.status === "completed" ? "success" : `failed: ${result.error || "unknown"}`;
+              console.log(`[blockrun] 自动充值结果: ${state.lastAutoTopupResult}`);
+            } else {
+              state.lastAutoTopupResult = "no_active_pact";
+              console.log("[blockrun] 无 active BlockRun Pact，跳过自动充值");
+            }
+          }
+        } catch (e) {
+          state.lastAutoTopupAt = new Date().toISOString();
+          state.lastAutoTopupResult = `error: ${e instanceof Error ? e.message : "unknown"}`;
+          console.warn("[blockrun] 自动充值失败:", state.lastAutoTopupResult);
+        }
+      } else {
+        console.log("[blockrun] 自动充值未启用（BLOCKRUN_AUTO_TOPUP_ENABLED=1 开启）");
+      }
     } else {
       console.log(
         `[blockrun] CAW USDC 余额充足（当前：$${balance.toFixed(2)}，阈值：$${state.minBalance.toFixed(2)}）`
@@ -413,10 +466,16 @@ export type R34SweepHeartbeatStatus = {
   veniceBalanceUsd: number;
   veniceBalanceThreshold: number;
   lastBalanceCheckAt: string | undefined;
+  blockrunBalanceUsd: number;
+  blockrunMinBalance: number;
+  blockrunAutoTopupEnabled: boolean;
+  blockrunLastAutoTopupAt: string | undefined;
+  blockrunLastAutoTopupResult: string | undefined;
 };
 
 export function getR34SweepHeartbeatStatus(): R34SweepHeartbeatStatus {
   const state = getState();
+  const blockrunState = getBlockRunBalanceState();
   return {
     running: Boolean(state.intervalHandle),
     startedAt: state.startedAt,
@@ -429,6 +488,11 @@ export function getR34SweepHeartbeatStatus(): R34SweepHeartbeatStatus {
     intervalMs: resolveIntervalMs(),
     veniceBalanceUsd: state.veniceBalanceUsd,
     veniceBalanceThreshold: state.veniceBalanceThreshold,
-    lastBalanceCheckAt: state.lastBalanceCheckAt
+    lastBalanceCheckAt: state.lastBalanceCheckAt,
+    blockrunBalanceUsd: blockrunState.usdBalance,
+    blockrunMinBalance: blockrunState.minBalance,
+    blockrunAutoTopupEnabled: blockrunState.autoTopupEnabled,
+    blockrunLastAutoTopupAt: blockrunState.lastAutoTopupAt,
+    blockrunLastAutoTopupResult: blockrunState.lastAutoTopupResult,
   };
 }
