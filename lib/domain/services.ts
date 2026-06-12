@@ -1,6 +1,7 @@
 import {
   createCawGateway,
   getCawRuntimeStatus,
+  type CawGatewayConfig,
   type CawGateway,
   type CawTransactionRecord
 } from "@/lib/caw/gateway";
@@ -11,6 +12,7 @@ import {
   getCawCliRuntimeStatus,
   getCawWalletInfoFromList,
   readCawCliWalletProfile,
+  readCawCliProfileCredentials,
   runCawOnboard,
   showCawCliPact,
   submitCawCliPact
@@ -216,8 +218,9 @@ async function getUserCawRuntimeStatus(
     });
   }
 
+  const config = await resolveUserCawGatewayConfig(user.id, user);
   return getCawRuntimeStatus({
-    walletId: getUserCawWalletId(user),
+    ...config,
     useDefaultWallet: false
   });
 }
@@ -400,7 +403,7 @@ export async function createPairingCode(input: { userId?: string }) {
   const pairing =
     onboarding?.status === "wallet_active"
       ? await createCawCliPairingCode(userId)
-      : await createCawGateway().createPairingCode({ userId, walletId });
+      : await (await createUserCawGateway(userId, user)).createPairingCode({ userId, walletId });
   const session = await repository.createPairingSession(userId, {
     code: pairing.code,
     status: pairing.status,
@@ -529,7 +532,7 @@ export async function connectCawWallet(input: {
       walletAddress: cliInfo.walletAddress
     };
   } else {
-    const gateway = createCawGateway();
+    const gateway = await createUserCawGateway(userId, user);
     connection = await gateway.connectWallet({
       userId,
       walletId,
@@ -626,7 +629,7 @@ export async function createCawAuthorization(input: {
           policies: preview.policies,
           completionConditions: preview.completionConditions
         })
-      : await createCawGateway().createPact({
+      : await (await createUserCawGateway(userId, user)).createPact({
           userId,
           walletId: wallet.walletId,
           walletAddress: wallet.walletAddress,
@@ -864,7 +867,7 @@ export async function refreshCawAuthorization(input: { userId?: string }) {
   const pact =
     onboarding?.status === "wallet_active"
       ? await showCawCliPact({ userId, pactId: authorization.pactId })
-      : await createCawGateway().getPact({ pactId: authorization.pactId });
+      : await (await createUserCawGateway(userId)).getPact({ pactId: authorization.pactId });
   const updated = await repository.updateAuthorization({
     ...authorization,
     status: pact.status,
@@ -901,10 +904,7 @@ export async function approveUsdcForCreditsPayment(input: {
     throw new Error("The active CAW Pact has no remaining spend for this approval. Create and approve a new Pact first.");
   }
 
-  const runtime = await getCawRuntimeStatus({
-    walletId: wallet.walletId,
-    useDefaultWallet: false
-  });
+  const runtime = await getUserRuntimeStatusForBoundWallet(userId, user);
   if (runtime.mode !== "http") {
     throw new Error("USDC approval requires real CAW mode.");
   }
@@ -934,7 +934,7 @@ export async function approveUsdcForCreditsPayment(input: {
     };
   }
 
-  const gateway = createCawGateway();
+  const gateway = await createUserCawGateway(userId, user);
   const result = await gateway.executeUsdcApproval({
     userId,
     walletId: wallet.walletId,
@@ -959,7 +959,7 @@ export async function requestTestTokens(input: { userId?: string; tokenId?: stri
   const userId = input.userId ?? DEMO_USER_ID;
   const user = await repository.requireUser(userId);
   const wallet = requireBoundCawWallet(user);
-  const gateway = createCawGateway();
+  const gateway = await createUserCawGateway(userId, user);
   const faucet = await gateway.requestFaucet({
     walletAddress: wallet.walletAddress,
     tokenId: input.tokenId
@@ -1290,7 +1290,7 @@ export async function refreshPendingTopupOrders(input: { userId?: string }) {
 
   let gateway: CawGateway;
   try {
-    gateway = createCawGateway();
+    gateway = await createUserCawGateway(userId, user);
   } catch (error) {
     return {
       status: "skipped" as const,
@@ -1423,7 +1423,7 @@ export async function executeCreditsTopup(input: {
     status: "pending_policy"
   });
 
-  const gateway = createCawGateway();
+  const gateway = await createUserCawGateway(userId, user);
   const chain = getConfiguredChain();
   const cawResult = await gateway.executeCreditsPurchase({
     userId,
@@ -1556,6 +1556,21 @@ export async function settleCreditsPurchase(input: {
     order,
     snapshot: await repository.snapshotForUser(order.userId)
   };
+}
+
+export async function listCawTransactions(input: {
+  userId?: string;
+  limit?: number;
+}) {
+  const repository = getCreditRepository();
+  const userId = input.userId ?? DEMO_USER_ID;
+  const user = await repository.requireUser(userId);
+  const wallet = requireBoundCawWallet(user);
+  const gateway = await createUserCawGateway(userId, user);
+  return gateway.listTransactions({
+    walletId: wallet.walletId,
+    limit: input.limit
+  });
 }
 
 async function refreshSingleTopupOrder(input: {
@@ -1734,10 +1749,8 @@ async function checkRealPaymentPreflight(input: {
   pactId: string;
   amountUsdcMinor: number;
 }) {
-  const runtime = await getCawRuntimeStatus({
-    walletId: input.walletId,
-    useDefaultWallet: false
-  });
+  const user = await getCreditRepository().requireUser(input.userId);
+  const runtime = await getUserRuntimeStatusForBoundWallet(input.userId, user);
   if (runtime.mode !== "http") {
     return { ok: true as const };
   }
@@ -1993,14 +2006,44 @@ function requireBoundCawWallet(user: User) {
   };
 }
 
+async function createUserCawGateway(userId: string, user?: User) {
+  return createCawGateway(await resolveUserCawGatewayConfig(userId, user));
+}
+
+async function resolveUserCawGatewayConfig(
+  userId: string,
+  user?: User
+): Promise<CawGatewayConfig> {
+  const repository = getCreditRepository();
+  const currentUser = user ?? (await repository.requireUser(userId));
+  const credential = await repository.getCawRuntimeCredential(userId);
+  const walletId = currentUser.cawWalletId ?? credential?.walletId;
+  const walletAddress = currentUser.cawWalletAddress ?? credential?.walletAddress;
+  const profile = await readCawCliProfileCredentials(userId, walletId).catch(() => undefined);
+
+  return {
+    apiUrl: credential?.apiUrl || profile?.apiUrl,
+    apiKey: profile?.apiKey,
+    walletId,
+    walletAddress,
+    walletName: credential?.walletName || profile?.walletName,
+    allowEnvFallback: false
+  };
+}
+
+async function getUserRuntimeStatusForBoundWallet(userId: string, user: User) {
+  const config = await resolveUserCawGatewayConfig(userId, user);
+  return getCawRuntimeStatus({
+    ...config,
+    useDefaultWallet: false
+  });
+}
+
 function getUserCawWalletId(user: User) {
   if (user.cawWalletId) {
     return user.cawWalletId;
   }
-  if (!user.cawWalletAddress) {
-    return undefined;
-  }
-  return process.env.AGENT_WALLET_WALLET_ID || process.env.CAW_WALLET_ID;
+  return undefined;
 }
 
 function normalizeOnboardingStatus(input: {

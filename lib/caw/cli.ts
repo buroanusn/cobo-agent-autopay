@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { mkdir } from "node:fs/promises";
+import { mkdir, readFile, readdir } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { homedir } from "node:os";
 import path from "node:path";
@@ -45,6 +45,14 @@ export type CawCliWalletProfile = {
   walletPaired?: boolean;
   pairTokenStatus?: string;
   walletStatus?: string;
+};
+
+export type CawCliProfileCredentials = {
+  apiKey: string;
+  apiUrl: string;
+  agentId?: string;
+  walletId?: string;
+  walletName?: string;
 };
 
 export type CawCliPaymentResult = {
@@ -110,6 +118,50 @@ export async function readCawCliWalletProfile(userId: string): Promise<CawCliWal
     pairTokenStatus: firstString(status, ["token_status", "pair_token_status"]),
     walletStatus: firstString(status, ["wallet_status", "status"])
   };
+}
+
+export async function readCawCliProfileCredentials(
+  userId: string,
+  walletUuid?: string
+): Promise<CawCliProfileCredentials | undefined> {
+  const cawHome = getCawHomePathForUser(userId);
+  const profilesDir = path.join(cawHome, ".cobo-agentic-wallet", "profiles");
+  if (!existsSync(profilesDir)) {
+    return undefined;
+  }
+
+  let dirs: string[];
+  try {
+    dirs = await readdir(profilesDir);
+  } catch {
+    return undefined;
+  }
+
+  for (const dir of dirs.filter((entry) => entry.startsWith("profile_caw_agent_"))) {
+    try {
+      const raw = await readFile(path.join(profilesDir, dir, "credentials"), "utf-8");
+      const parsed = JSON.parse(raw) as Record<string, unknown>;
+      const profileWalletUuid = firstString(parsed, ["wallet_uuid", "wallet_id"]);
+      if (walletUuid && profileWalletUuid !== walletUuid) {
+        continue;
+      }
+      const apiKey = firstString(parsed, ["api_key"]);
+      const apiUrl = firstString(parsed, ["api_url"]);
+      if (!apiKey || !apiUrl) {
+        continue;
+      }
+      return {
+        apiKey,
+        apiUrl,
+        agentId: firstString(parsed, ["agent_id"]),
+        walletId: profileWalletUuid,
+        walletName: firstString(parsed, ["wallet_name", "name"])
+      };
+    } catch {
+      // Keep scanning other profiles.
+    }
+  }
+  return undefined;
 }
 
 export async function getCawWalletInfoFromList(userId: string, walletUuid: string): Promise<{

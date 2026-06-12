@@ -48,9 +48,11 @@ The default runtime expects real CAW credentials and real Base Sepolia calls:
 
 Offline mock mode requires both `CAW_MODE=mock` and `CAW_ALLOW_MOCK=true`.
 
-For a new user or a separate deployment, create a separate CAW Agent Wallet and
-switch the deployment environment variables before generating the pairing code.
-See `docs/new-user-caw-pairing.md`.
+For each app user, bind a separate CAW Agent Wallet. Login, wallet binding,
+pairing sessions, Pact records, and runtime credential metadata are stored by
+database `userId`, so returning users can continue from their own bound wallet.
+See `docs/new-user-caw-pairing.md` for the current per-user flow and the
+remaining production note around CAW API key storage.
 
 ## Pact Drafter
 
@@ -145,8 +147,18 @@ For a real deployment:
   CAW metadata if your test environment uses a different name.
 - Deploy `contracts/CreditsPayment.sol` on Base Sepolia for testnet demos.
 - Configure `PAYMENT_CONTRACT_ADDRESS` and `TREASURY_ADDRESS`.
-- Replace the in-memory store with a durable database.
+- Use `STORAGE_DRIVER=prisma` and run migrations so per-user wallet bindings,
+  onboarding sessions, Pact records, and runtime credential metadata survive
+  restarts.
 - Subscribe to `CreditsPurchased` events and call `POST /api/webhooks/chain/credits-payment`.
+
+Important multi-user note: the app stores one CAW wallet binding per login
+email. CLI-backed onboarding/Pact operations use an isolated CAW CLI home per
+`userId`, and CAW SDK paths such as USDC approval, credits top-up execution, and
+transaction listing now initialize the gateway from that user's runtime
+credential/profile instead of silently falling back to the deployment wallet.
+For hardened production storage, replace the current `caw-cli-profile:<walletId>`
+marker with encrypted API-key storage and server-side decryption.
 
 ## Core Flow
 
