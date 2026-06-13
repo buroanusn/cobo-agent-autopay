@@ -299,6 +299,41 @@ async function runR34SweepTick(): Promise<R34SweepTickResult> {
   }
 }
 
+// ── Treasury 互充触发 ────────────────────────────────────────────────────
+async function triggerTreasuryTransfer(threshold: number): Promise<void> {
+  try {
+    const topup = await import("@/lib/venice/topup");
+    const lockState = topup.getPaymentLockState();
+    if (lockState !== "idle") {
+      console.log(`[venice-balance] Balance below threshold but lock busy (${lockState}), skipping treasury transfer`);
+      return;
+    }
+    const repo = await import("@/lib/store").then(m => m.getCreditRepository());
+    const { DEMO_USER_ID } = await import("@/lib/domain/constants");
+    const user = await repo.requireUser(DEMO_USER_ID);
+    console.log(`[venice-balance] user=${user.id}, cawWalletAddress=${user.cawWalletAddress ?? "NULL"}`);
+    if (user.cawWalletAddress) {
+      try {
+        const auth = await repo.getActiveAuthorization(user.id, "venice_x402");
+        console.log(`[venice-balance] auth=${auth ? `status=${auth.status}, pactId=${auth.pactId}` : "NULL"}`);
+        if (auth?.status === "active") {
+          console.log(`[venice-balance] ✅ 条件满足，触发 runVeniceX402Topup`);
+          await topup.runVeniceX402Topup({
+            userId: user.id,
+            walletAddress: user.cawWalletAddress,
+            pactId: auth.pactId,
+            usdAmount: threshold,
+          });
+        }
+      } catch (e) {
+        console.warn("[venice-balance] Treasury transfer failed for user:", user.id, e);
+      }
+    }
+  } catch (e) {
+    console.warn("[venice-balance] triggerTreasuryTransfer failed:", e);
+  }
+}
+
 // ── Venice balance polling (60s independent timer) ─────────────────────
 async function checkVeniceBalance(): Promise<void> {
   const state = getState();
@@ -322,6 +357,10 @@ async function checkVeniceBalance(): Promise<void> {
     if (usdBalance < state.veniceBalanceThreshold && isVeniceAutoTopupEnabled()) {
       if (process.env.VENICE_ALLOW_DEMO_AUTOTOPUP !== "1") {
         console.log("[venice-balance] 全局 demo 自动充值已默认禁用；用户级自动支付由 Agent/user 流程触发");
+        // Treasury 互充：独立于 demo 自动充值，有自己的开关
+        if (process.env.VENICE_AUTO_X402_TOPUP_ENABLED === "1") {
+          await triggerTreasuryTransfer(state.veniceBalanceThreshold);
+        }
         return;
       }
       const topup = await import("@/lib/venice/topup");
