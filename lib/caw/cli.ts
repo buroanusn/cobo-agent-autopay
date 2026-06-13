@@ -202,7 +202,10 @@ export async function getCawWalletInfoFromList(userId: string, walletUuid: strin
         const walletsApi = new WalletsApi(config);
         const resp = await walletsApi.listWalletAddresses(walletUuid);
         const addrs = resp.data?.result;
-        const first = Array.isArray(addrs) ? addrs[0] as unknown as Record<string, unknown> : undefined;
+        // Prefer ETH address (EVM-compatible) over SOL for Base Sepolia/mainnet
+        const arr = Array.isArray(addrs) ? addrs as unknown as Record<string, unknown>[] : [];
+        const ethAddr = arr.find(a => String(a.chain_type ?? '') === 'ETH');
+        const first = ethAddr ?? arr[0];
         if (first) {
           walletAddress = (first.address ?? first.addr ?? undefined) as string | undefined;
         }

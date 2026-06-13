@@ -47,11 +47,58 @@ function setLock(key: string, state: PaymentLockState, timeoutMs?: number): void
   paymentLocks.set(key, entry);
 }
 
-// TODO: 钱包互充功能预留入口
-async function onInsufficientWalletBalance(): Promise<void> {
-  // 预留：CAW余额不足时，向其他钱包发起补充请求
-  // 后续版本实现
-  console.log('[autopay] CAW wallet balance insufficient, inter-wallet transfer not yet implemented')
+// 钱包互充：Spending 钱包 USDC 不足时 Treasury 自动补充
+export async function onInsufficientWalletBalance(userId: string): Promise<void> {
+  // 从数据库读取 Treasury 配置
+  const { getUserSecrets } = await import("@/lib/secrets/store");
+  const secrets = await getUserSecrets(userId, [
+    "TREASURY_API_KEY",
+    "TREASURY_API_URL",
+    "TREASURY_PACT_ID",
+    "TREASURY_TOPUP_AMOUNT",
+  ]);
+
+  const apiKey = secrets["TREASURY_API_KEY"];
+  const apiUrl = secrets["TREASURY_API_URL"] || process.env.CAW_API_URL;
+  const pactId = secrets["TREASURY_PACT_ID"];
+  const amount = Number(secrets["TREASURY_TOPUP_AMOUNT"]) || 20;
+  const dstAddress = process.env.SPENDING_WALLET_ADDRESS;
+  const srcAddress = process.env.TREASURY_ADDRESS;
+
+  console.log(`[treasury] secrets: apiKey=${apiKey ? "SET" : "NULL"}, pactId=${pactId ? "SET" : "NULL"}, dstAddress=${dstAddress ?? "NULL"}, srcAddress=${srcAddress ?? "NULL"}`);
+
+  if (!apiKey || !pactId || !dstAddress || !srcAddress) {
+    console.log("[treasury] 互充未配置，跳过（缺少 TREASURY_API_KEY 或 TREASURY_PACT_ID 或 SPENDING_WALLET_ADDRESS 或 TREASURY_ADDRESS）");
+    return;
+  }
+
+  // Amount in USDC (caw CLI expects decimal USDC, not minor units)
+  console.log(`[treasury] 触发互充 → 转账 ${amount} USDC → ${dstAddress.slice(0, 6)}...${dstAddress.slice(-4)}`);
+
+  // Fire-and-forget：不等待结果，不抛异常
+  const { runTreasuryTransfer } = await import("@/lib/caw/transfer");
+  runTreasuryTransfer({
+    pactId,
+    srcAddress,
+    dstAddress,
+    tokenId: "BASE_USDC",
+    amount: amount,
+    chainId: "BASE_ETH",
+    apiKey,
+    apiUrl: apiUrl!,
+  })
+    .then((result) => {
+      if (result.success) {
+        console.log(`[treasury] ✅ 互充完成，txHash: ${result.txHash}`);
+      } else if (result.error === "TRANSFER_COOLDOWN") {
+        console.log("[treasury] ⏳ 互充冷却中，跳过");
+      } else {
+        console.log(`[treasury] ❌ 互充失败：${result.error}`);
+      }
+    })
+    .catch((err: Error) =>
+      console.log(`[treasury] ❌ 互充异常：${err.message}`)
+    );
 }
 
 // ── Existing imports below ────────────────────────────────────────────────
@@ -252,8 +299,8 @@ export async function runVeniceX402Topup(input: {
   } else {
     setLock(lockKey, 'idle');
     // Check for insufficient funds → fire hook
-    if (/insufficient.*fund|INSUFFICIENT_FUNDS/i.test(result.stderr + result.stdout)) {
-      void onInsufficientWalletBalance();
+    if (/insufficient.*(fund|balance)|INSUFFICIENT_FUNDS|X402_INSUFFICIENT/i.test(result.stderr + result.stdout)) {
+      void onInsufficientWalletBalance(input.userId);
     }
   }
 
