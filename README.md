@@ -1,6 +1,6 @@
 # Cobo Agent Autopay
 
-**AI Agent 自动支付基础设施** — 基于 Cobo Agentic Wallet + x402 协议，让 AI Agent 具备自主支付能力。
+**AI Agent 自动支付管理系统** — 面向多 Agent 系统，基于 Cobo Agentic Wallet 的 Pact 与 Guardrails 风控体系，让 AI Agent 自主完成余额监控、x402 链上支付与 Agent 间资金调度，全程无需人工干预。
 
 ---
 
