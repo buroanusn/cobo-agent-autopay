@@ -414,7 +414,7 @@ function getCawHomeRoot() {
   return process.env.CAW_CLI_HOME_ROOT || path.join(process.cwd(), ".caw-cli-homes");
 }
 
-function resolveCawBinary() {
+export function resolveCawBinary() {
   if (process.env.CAW_CLI_PATH) {
     return process.env.CAW_CLI_PATH;
   }

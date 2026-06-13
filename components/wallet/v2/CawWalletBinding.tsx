@@ -108,9 +108,34 @@ export default function CawWalletBinding({ onAfterAction }: { onAfterAction?: ()
     }
   }
 
+  type ConfigCheck = {
+    cliAvailable: boolean;
+    envVars: { apiUrl: boolean; apiKey: boolean; walletId: boolean };
+    issues: string[];
+    suggestions: string[];
+  };
+
+  async function preflightCheck(): Promise<ConfigCheck | null> {
+    try {
+      const res = await fetch('/api/wallet/caw/config-check');
+      if (res.ok) return await res.json();
+    } catch {
+      // ignore — proceed without preflight
+    }
+    return null;
+  }
+
   async function handleAutoBind() {
     setBusy('auto');
     setActionMsg(null);
+    const check = await preflightCheck();
+    if (check && check.issues.length > 0) {
+      setActionMsg(
+        `配置问题：\n${check.issues.join('\n')}\n\n修复建议：\n${check.suggestions.join('\n')}`
+      );
+      setBusy(null);
+      return;
+    }
     try {
       const res = await fetch('/api/wallet/caw/connect', { method: 'POST' });
       const data = await res.json();
@@ -135,6 +160,14 @@ export default function CawWalletBinding({ onAfterAction }: { onAfterAction?: ()
     }
     setBusy('manual');
     setActionMsg(null);
+    const check = await preflightCheck();
+    if (check && check.issues.length > 0) {
+      setActionMsg(
+        `配置问题：\n${check.issues.join('\n')}\n\n修复建议：\n${check.suggestions.join('\n')}`
+      );
+      setBusy(null);
+      return;
+    }
     try {
       const res = await fetch('/api/wallet/caw/connect', {
         method: 'POST',
@@ -315,7 +348,9 @@ export default function CawWalletBinding({ onAfterAction }: { onAfterAction?: ()
       )}
 
       {actionMsg && (
-        <p className="mt-3 text-xs text-gray-600">{actionMsg}</p>
+        <div className="mt-3 rounded-lg bg-amber-50 border border-amber-100 px-3 py-2 text-xs text-amber-800 whitespace-pre-line">
+          {actionMsg}
+        </div>
       )}
     </SectionCard>
   );

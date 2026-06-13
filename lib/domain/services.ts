@@ -523,8 +523,18 @@ export async function connectCawWallet(input: {
   }
   // Try CLI first (works without .env credentials — uses the local caw profile).
   // Fall back to gateway only if CLI can't resolve the wallet.
+  let cliError: string | undefined;
+  let cliInfo: Awaited<ReturnType<typeof getCawWalletInfoFromList>> | undefined;
+  try {
+    cliInfo = await getCawWalletInfoFromList(userId, walletId);
+    if (!cliInfo?.walletAddress) {
+      cliError = "caw CLI 未返回钱包地址，请确认 caw 已安装并完成 onboarding";
+    }
+  } catch (e) {
+    cliError = e instanceof Error ? e.message : "caw CLI 调用失败";
+  }
+
   let connection: { connectionId: string; walletId?: string; walletAddress: string };
-  const cliInfo = await getCawWalletInfoFromList(userId, walletId);
   if (cliInfo?.walletAddress) {
     connection = {
       connectionId: `cli_${walletId}`,
@@ -532,12 +542,25 @@ export async function connectCawWallet(input: {
       walletAddress: cliInfo.walletAddress
     };
   } else {
-    const gateway = await createUserCawGateway(userId, user);
-    connection = await gateway.connectWallet({
-      userId,
-      walletId,
-      walletAddress: input.walletAddress
-    });
+    try {
+      const gateway = await createUserCawGateway(userId, user);
+      connection = await gateway.connectWallet({
+        userId,
+        walletId,
+        walletAddress: input.walletAddress
+      });
+    } catch (gatewayError) {
+      const gwMsg = gatewayError instanceof Error ? gatewayError.message : "HTTP 网关调用失败";
+      throw new Error(
+        `钱包绑定失败：\n` +
+        `1. CLI 路径: ${cliError ?? "未知错误"}\n` +
+        `2. HTTP 网关: ${gwMsg}\n\n` +
+        `修复建议：\n` +
+        `- 确保 caw CLI 已安装并在 PATH 上（运行 caw --version 检查）\n` +
+        `- 或在 .env.local 中设置 AGENT_WALLET_API_URL=https://api.agenticwallet.cobo.com\n` +
+        `- 并设置 AGENT_WALLET_API_KEY=<你的 CAW API Key>`
+      );
+    }
   }
   if (!connection.walletAddress) {
     throw new Error("CAW wallet address was not found for this Wallet UUID.");

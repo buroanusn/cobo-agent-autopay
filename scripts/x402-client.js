@@ -19,8 +19,13 @@ const DISABLE_TLS = String.fromCharCode(48); // "0"
 
 function readCredentials() {
   const credPath =
-    process.env.CAW_CREDENTIALS_PATH ||
-    `${process.env.HOME}/.cobo-agentic-wallet/profiles/profile_caw_agent_df4b1aea2757e336/credentials`;
+    process.env.CAW_CREDENTIALS_PATH;
+  if (!credPath) {
+    throw new Error(
+      "CAW_CREDENTIALS_PATH is not set. Set it to the path of your CAW credentials file.\n" +
+      "Example: export CAW_CREDENTIALS_PATH=~/.cobo-agentic-wallet/profiles/profile_caw_agent_xxx/credentials"
+    );
+  }
   return JSON.parse(fs.readFileSync(credPath, "utf8"));
 }
 
@@ -95,7 +100,11 @@ async function main() {
     return;
   }
 
-  const srcAddress = "0x916ea4051f2c1815d286bd5c499756d68affeea5";
+  const srcAddress = process.env.CAW_WALLET_ADDRESS;
+  if (!srcAddress) {
+    console.log("[!] CAW_WALLET_ADDRESS is not set. Set it to your wallet address.");
+    return;
+  }
 
   // Execute transfer
   let txResult;

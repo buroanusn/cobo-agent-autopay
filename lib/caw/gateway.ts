@@ -719,7 +719,10 @@ function requiredConfigAlias(
       }
     }
   }
-  throw new Error(`${names.join(" or ")} is required when CAW_MODE=http.`);
+  throw new Error(
+    `${names.join(" 或 ")} 未配置。请在 .env.local 中设置：\n` +
+    names.map(n => `  ${n}=<值>`).join('\n')
+  );
 }
 
 function requiredInput(value: string | undefined, name: string) {

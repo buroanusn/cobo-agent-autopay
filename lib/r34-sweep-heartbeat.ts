@@ -135,9 +135,9 @@ async function readCawWalletUsdcBalance(): Promise<number | null> {
     const isTestnet = process.env.BLOCKRUN_USE_TESTNET !== "false";
     const chain = isTestnet ? baseSepolia : base;
     const client = createPublicClient({ chain, transport: viemHttp() });
-    const usdcAddress = isTestnet
-      ? "0x036CbD53842c5426634e7929541eC2318f3dCF7e"
-      : "0x833589fCD6eDb6E08f4c7c32D4f71b54bDA02913";
+    const { getConfiguredChain } = await import("@/lib/domain/constants");
+    const chainConfig = getConfiguredChain();
+    const usdcAddress = chainConfig.usdcAddress;
     const abi = [{ constant: true, inputs: [{ name: "_owner", type: "address" }], name: "balanceOf", outputs: [{ name: "balance", type: "uint256" }], type: "function" }] as const;
     const walletAddress = process.env.BLOCKRUN_WALLET_ADDRESS || process.env.BASE_WALLET_ADDRESS;
     if (!walletAddress) {

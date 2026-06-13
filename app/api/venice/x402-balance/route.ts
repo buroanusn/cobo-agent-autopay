@@ -100,7 +100,7 @@ async function signWithCaw(
     const child = spawn(
       "curl",
       ["-s", "--http2-prior-knowledge", "-X", "POST",
-       `https://api.agenticwallet.cobo.com/api/v1/wallets/${walletUuid}/message-sign`,
+       `${process.env.AGENT_WALLET_API_URL || process.env.CAW_API_BASE_URL || "https://api.agenticwallet.cobo.com"}/api/v1/wallets/${walletUuid}/message-sign`,
        "-H", "Content-Type: application/json",
        "-H", `x-api-key: ${pactApiKey}`,
        "-d", payload],
@@ -173,7 +173,7 @@ async function queryVeniceBalance(
   const headerValue = Buffer.from(JSON.stringify(headerObj)).toString("base64");
 
   const response = await fetch(
-    `https://api.venice.ai/api/v1/x402/balance/${walletAddress.toLowerCase()}`,
+    `${process.env.VENICE_BASE_URL || "https://api.venice.ai"}/api/v1/x402/balance/${walletAddress.toLowerCase()}`,
     { headers: { "X-Sign-In-With-X": headerValue }, cache: "no-store" }
   );
 
