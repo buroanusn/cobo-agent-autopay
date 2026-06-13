@@ -3,11 +3,44 @@ import { randomBytes } from "node:crypto";
 import { spawn } from "node:child_process";
 import { requireCurrentUser } from "@/lib/auth/session";
 import { errorJson, okJson, readJson } from "@/lib/http";
+import { runCawCli } from "@/lib/caw/cli";
 
 export const dynamic = "force-dynamic";
 
-// 已知可用的 Venice SIWE pact
-const KNOWN_PACT_ID = "e6a9e389-d55d-42a3-995d-297b8d2d6690";
+// 从 pact list 中找 active 的 Venice SIWE pact
+async function findVeniceSiwePact(userId: string): Promise<{ id: string; apiKey: string } | null> {
+  const result = await runCawCli(userId, ["pact", "list"]);
+  if (result.exitCode !== 0) return null;
+
+  let data: { result?: { pacts?: Array<Record<string, unknown>> } };
+  try {
+    data = JSON.parse(result.stdout);
+  } catch {
+    return null;
+  }
+
+  const pacts = data.result?.pacts ?? [];
+  for (const pact of pacts) {
+    if (String(pact.status) !== "active") continue;
+    const intent = String(pact.intent ?? "");
+    const name = String(pact.name ?? "");
+    if (intent.includes("SIWE") || intent.includes("personal_sign") || name.includes("SIWE")) {
+      // 获取 pact 的 api_key
+      const statusResult = await runCawCli(userId, ["pact", "status", "--pact-id", String(pact.id)]);
+      if (statusResult.exitCode === 0) {
+        try {
+          const statusData = JSON.parse(statusResult.stdout);
+          if (statusData.api_key) {
+            return { id: String(pact.id), apiKey: statusData.api_key };
+          }
+        } catch {}
+      }
+      // fallback: pact 没有 api_key，返回 id only
+      return { id: String(pact.id), apiKey: "" };
+    }
+  }
+  return null;
+}
 
 function runCaw(args: string[]): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -20,25 +53,6 @@ function runCaw(args: string[]): Promise<string> {
     child.on("close", () => resolve(stdout));
     child.on("error", reject);
   });
-}
-
-// 获取 pact API key
-async function getPactApiKey(pactId: string): Promise<string> {
-  const output = await runCaw(["pact", "status", "--pact-id", pactId]);
-  const result = JSON.parse(output);
-  if (!result.api_key) throw new Error("No api_key in pact status");
-  return result.api_key;
-}
-
-// 检查 pact 是否 active
-async function isPactActive(pactId: string): Promise<boolean> {
-  try {
-    const output = await runCaw(["pact", "status", "--pact-id", pactId]);
-    const result = JSON.parse(output);
-    return result.status === "active";
-  } catch {
-    return false;
-  }
 }
 
 // SIWE 消息构造
@@ -59,10 +73,10 @@ Nonce: ${nonce}
 Issued At: ${now.toISOString()}
 Expiration Time: ${exp.toISOString()}`;
 
-  return { message, nonce, timestampMs: now.getTime() };
+  return { message, nonce };
 }
 
-// 调用 CAW API 签名
+// CAW 签名
 async function signWithCaw(
   walletUuid: string,
   pactApiKey: string,
@@ -181,13 +195,11 @@ export async function POST(request: Request) {
       return errorJson(new Error("请先绑定 CAW 钱包"), 400);
     }
 
-    // 检查已知 pact 是否可用
-    const pactActive = await isPactActive(KNOWN_PACT_ID);
-    if (!pactActive) {
+    // 动态查找 active Venice SIWE pact
+    const venicePact = await findVeniceSiwePact(user.id);
+    if (!venicePact) {
       return errorJson(new Error("Venice SIWE Pact 不可用，请先创建或审批"), 400);
     }
-
-    const pactApiKey = await getPactApiKey(KNOWN_PACT_ID);
 
     if (body.action === "sign") {
       const siwe = buildSiweMessage(user.cawWalletAddress);
@@ -195,33 +207,34 @@ export async function POST(request: Request) {
 
       const signResult = await signWithCaw(
         user.cawWalletId,
-        pactApiKey,
+        venicePact.apiKey,
         user.cawWalletAddress,
         siwe.message,
         requestId
       );
 
       return okJson({
-        status: "signing",
         requestId: signResult.requestId,
         siweMessage: siwe.message,
-        timestampMs: siwe.timestampMs,
-        pactId: KNOWN_PACT_ID,
-        message: "请在手机上审批签名请求",
+        timestampMs: Date.now(),
+        pactId: venicePact.id,
+        status: "signing",
       });
     }
 
-    if (body.action === "query" && body.requestId && body.siweMessage && body.timestampMs) {
-      const signature = await getSignatureFromCaw(body.requestId);
-
-      if (!signature) {
-        return okJson({
-          status: "pending",
-          message: "签名尚未完成，请在手机上审批后重试",
-        });
+    if (body.action === "query") {
+      if (!body.requestId || !body.siweMessage || !body.timestampMs) {
+        return errorJson(new Error("Missing requestId, siweMessage, or timestampMs"), 400);
       }
 
-      const result = await queryVeniceBalance(
+      // 尝试获取签名
+      const signature = await getSignatureFromCaw(body.requestId);
+      if (!signature) {
+        return okJson({ status: "pending", message: "签名尚未完成，请稍后重试" });
+      }
+
+      // 查询 Venice 余额
+      const balance = await queryVeniceBalance(
         user.cawWalletAddress,
         signature,
         body.siweMessage,
@@ -230,11 +243,12 @@ export async function POST(request: Request) {
 
       return okJson({
         status: "completed",
-        balance: result,
+        balance: balance,
+        pactId: venicePact.id,
       });
     }
 
-    return errorJson(new Error("无效的参数"), 400);
+    return errorJson(new Error("Unknown action"), 400);
   } catch (error) {
     return errorJson(error);
   }

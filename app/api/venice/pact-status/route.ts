@@ -1,74 +1,62 @@
 import { requireCurrentUser } from "@/lib/auth/session";
 import { errorJson, okJson } from "@/lib/http";
-import { spawn } from "node:child_process";
+import { runCawCli } from "@/lib/caw/cli";
 
 export const dynamic = "force-dynamic";
-
-// 已知可用的 Venice SIWE pact
-const KNOWN_PACT_ID = "e6a9e389-d55d-42a3-995d-297b8d2d6690";
-
-function runCaw(args: string[]): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const child = spawn("caw", args, {
-      env: { ...process.env, NODE_TLS_REJECT_UNAUTHORIZED: "0" },
-      stdio: ["ignore", "pipe", "pipe"],
-    });
-    let stdout = "";
-    let stderr = "";
-    child.stdout.on("data", (b) => (stdout += b.toString()));
-    child.stderr.on("data", (b) => (stderr += b.toString()));
-    child.on("close", () => resolve(stdout));
-    child.on("error", (e) => reject(e));
-  });
-}
 
 export async function GET() {
   try {
     const user = await requireCurrentUser();
 
-    // 直接检查已知 pact
+    // 使用 runCawCli 走 per-user HOME，列出所有 pacts
+    const result = await runCawCli(user.id, ["pact", "list"]);
+    if (result.exitCode !== 0) {
+      return okJson({ hasPact: false, pactId: null, status: "no_pact", message: "caw pact list failed" });
+    }
+
+    let data: { result?: { pacts?: Array<Record<string, unknown>> } };
     try {
-      const output = await runCaw(["pact", "status", "--pact-id", KNOWN_PACT_ID]);
-      const pact = JSON.parse(output);
-      
-      if (pact.status === "active") {
+      data = JSON.parse(result.stdout);
+    } catch {
+      return okJson({ hasPact: false, pactId: null, status: "no_pact", message: "non-JSON response" });
+    }
+
+    const pacts = data.result?.pacts ?? [];
+
+    // 找 active 的 Venice SIWE pact（intent 含 personal_sign 或 SIWE）
+    for (const pact of pacts) {
+      if (String(pact.status) !== "active") continue;
+      const intent = String(pact.intent ?? "");
+      const name = String(pact.name ?? "");
+      if (intent.includes("SIWE") || intent.includes("personal_sign") || name.includes("SIWE")) {
         return okJson({
           hasPact: true,
-          pactId: KNOWN_PACT_ID,
+          pactId: String(pact.id),
           status: "active",
-          expiresAt: pact.expires_at,
+          expiresAt: String(pact.expires_at ?? ""),
           walletAddress: user.cawWalletAddress,
         });
       }
-    } catch {}
+    }
 
-    // 已知 pact 不可用，从列表找
-    try {
-      const output = await runCaw(["pact", "list"]);
-      const data = JSON.parse(output);
-      const pacts = data.result?.pacts || [];
-      
-      for (const pact of pacts) {
-        if (pact.status !== "active") continue;
-        const policies = pact.spec?.policies || [];
-        const hasMessageSign = policies.some((p: { type?: string }) => p.type === "message_sign");
-        if (hasMessageSign) {
-          return okJson({
-            hasPact: true,
-            pactId: pact.id,
-            status: pact.status,
-            expiresAt: pact.expires_at,
-            walletAddress: user.cawWalletAddress,
-          });
-        }
+    // 没找到 Venice pact，返回任意 active pact（用于其他用途）
+    for (const pact of pacts) {
+      if (String(pact.status) === "active") {
+        return okJson({
+          hasPact: true,
+          pactId: String(pact.id),
+          status: "active",
+          expiresAt: String(pact.expires_at ?? ""),
+          walletAddress: user.cawWalletAddress,
+        });
       }
-    } catch {}
+    }
 
     return okJson({
       hasPact: false,
       pactId: null,
       status: "no_pact",
-      message: "未找到 Venice SIWE 签名 Pact",
+      message: "未找到 active Pact",
     });
   } catch (error) {
     return errorJson(error);
