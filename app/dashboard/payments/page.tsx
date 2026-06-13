@@ -4,7 +4,6 @@ import AppLayout from '@/components/layout/AppLayout';
 import AgentSelector from '@/components/dashboard/v2/AgentSelector';
 import PaymentStatsCards from '@/components/payments/v2/PaymentStatsCards';
 import PaymentStatistics from '@/components/payments/v2/PaymentStatistics';
-import PactAndApprovalCard from '@/components/payments/v2/PactAndApprovalCard';
 import TransactionRecords from '@/components/payments/v2/TransactionRecords';
 
 /**
@@ -34,10 +33,7 @@ export default function PaymentsPage() {
         <PaymentStatsCards />
 
         {/* 区块 2 + 区块 3+4 并排（大屏并排，小屏堆叠） */}
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-          <PaymentStatistics />
-          <PactAndApprovalCard />
-        </div>
+        <PaymentStatistics />
 
         {/* 区块 5：完整交易记录 */}
         <TransactionRecords />

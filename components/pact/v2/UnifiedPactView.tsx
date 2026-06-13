@@ -9,6 +9,60 @@ import SectionCard from '@/components/dashboard/v2/SectionCard';
 import { USDC_MINOR_UNITS } from '@/lib/domain/constants';
 import { formatUsdc } from '@/lib/domain/money';
 
+// ─── Presets ─────────────────────────────────────────────────────────
+
+type Preset = {
+  id: string;
+  name: string;
+  nameEn: string;
+  description: string;
+  riskLevel: string;
+  riskColor: string;
+  reviewThreshold: number;
+  singleLimit: number;
+  validDays: number;
+  cumulativeLimit: number;
+};
+
+const PRESETS: Preset[] = [
+  {
+    id: 'light-explorer',
+    name: '轻度探索者',
+    nameEn: 'Light Explorer',
+    description: '适合新手 / 测试用户，偶尔使用 Agent，想极致简单安全',
+    riskLevel: '极低',
+    riskColor: 'bg-emerald-50 text-emerald-700 border-emerald-200',
+    reviewThreshold: 50,
+    singleLimit: 30,
+    validDays: 30,
+    cumulativeLimit: 500,
+  },
+  {
+    id: 'daily-agent',
+    name: '日常高效用户',
+    nameEn: 'Daily Agent',
+    description: '每天稳定使用多个 Agent，中等消耗量（推荐默认）',
+    riskLevel: '低（推荐）',
+    riskColor: 'bg-blue-50 text-blue-700 border-blue-200',
+    reviewThreshold: 150,
+    singleLimit: 80,
+    validDays: 60,
+    cumulativeLimit: 2000,
+  },
+  {
+    id: 'heavy-operator',
+    name: '重度 Agent 用户',
+    nameEn: 'Heavy Operator',
+    description: '重度使用 AI Agent，24h 持续运行，消耗量大',
+    riskLevel: '中',
+    riskColor: 'bg-amber-50 text-amber-700 border-amber-200',
+    reviewThreshold: 400,
+    singleLimit: 200,
+    validDays: 90,
+    cumulativeLimit: 8000,
+  },
+];
+
 // ─── Types ────────────────────────────────────────────────────────────
 
 type CawPact = {
@@ -108,6 +162,15 @@ export default function UnifiedPactView() {
   const [brMonthly, setBrMonthly] = useState(20);
   const [brDays, setBrDays] = useState(7);
 
+  // Preset state
+  const [selectedPresetId, setSelectedPresetId] = useState<string | null>(null);
+  const [presetParams, setPresetParams] = useState<{
+    reviewThreshold: number;
+    singleLimit: number;
+    validDays: number;
+    cumulativeLimit: number;
+  } | null>(null);
+
   // ── Load data ──
 
   const loadCawPacts = useCallback(async () => {
@@ -132,6 +195,41 @@ export default function UnifiedPactView() {
       }
     } catch { /* ignore */ }
   }, []);
+
+  function selectPreset(preset: Preset) {
+    setSelectedPresetId(preset.id);
+    setPresetParams({
+      reviewThreshold: preset.reviewThreshold,
+      singleLimit: preset.singleLimit,
+      validDays: preset.validDays,
+      cumulativeLimit: preset.cumulativeLimit,
+    });
+    // Fill Venice
+    setVeniceSingle(preset.singleLimit);
+    setVeniceDaily(preset.cumulativeLimit);
+    setVeniceMonthly(preset.cumulativeLimit);
+    setVeniceDays(preset.validDays);
+    // Fill BlockRun
+    setBrSingle(preset.singleLimit);
+    setBrDaily(preset.cumulativeLimit);
+    setBrMonthly(preset.cumulativeLimit);
+    setBrDays(preset.validDays);
+  }
+
+  function updatePresetParam(key: 'reviewThreshold' | 'singleLimit' | 'validDays' | 'cumulativeLimit', value: number) {
+    if (!presetParams) return;
+    const next = { ...presetParams, [key]: value };
+    setPresetParams(next);
+    // Sync to Venice / BlockRun
+    setVeniceSingle(next.singleLimit);
+    setVeniceDaily(next.cumulativeLimit);
+    setVeniceMonthly(next.cumulativeLimit);
+    setVeniceDays(next.validDays);
+    setBrSingle(next.singleLimit);
+    setBrDaily(next.cumulativeLimit);
+    setBrMonthly(next.cumulativeLimit);
+    setBrDays(next.validDays);
+  }
 
   useEffect(() => {
     loadCawPacts();
@@ -295,64 +393,118 @@ export default function UnifiedPactView() {
   return (
     <div className="space-y-6">
 
-      {/* ─────────── Section 1: All CAW Pacts ─────────── */}
-      <SectionCard
-        title="CAW Pact 总览"
-        subtitle="钱包中所有 Pact 授权（来自 Cobo App）"
-        loading={cawPacts === null}
-        action={
-          <button
-            onClick={loadCawPacts}
-            className="inline-flex items-center gap-1 text-xs text-gray-500 hover:text-gray-700"
-          >
-            <RefreshCw className="w-3 h-3" /> 刷新
-          </button>
-        }
-      >
-        <div className="grid grid-cols-2 md:grid-cols-3 gap-3 mb-4">
-          <div className="rounded-lg bg-gray-50 px-3 py-2.5">
-            <p className="text-[11px] text-gray-500">活跃 Pact</p>
-            <p className="text-base font-semibold text-gray-900 mt-0.5">{activePacts.length} 个</p>
-          </div>
-          <div className="rounded-lg bg-gray-50 px-3 py-2.5">
-            <p className="text-[11px] text-gray-500">Base USDC Pact</p>
-            <p className="text-base font-semibold mt-0.5 flex items-center gap-1">
-              {hasBaseUsdc ? (
-                <span className="inline-flex items-center gap-1 text-emerald-700">
-                  <CheckCircle2 className="w-4 h-4" />就绪
-                </span>
-              ) : (
-                <span className="inline-flex items-center gap-1 text-red-600">
-                  <XCircle className="w-4 h-4" />缺少
-                </span>
-              )}
-            </p>
-          </div>
-          <div className="rounded-lg bg-gray-50 px-3 py-2.5 col-span-2 md:col-span-1">
-            <p className="text-[11px] text-gray-500">网络说明</p>
-            <p className="text-xs text-gray-700 mt-1">测试网 Pact ≠ 主网 Pact，不可互用</p>
-          </div>
-        </div>
-
-        {activePacts.length > 0 ? (
-          <div className="space-y-1.5">
-            {activePacts.map((p) => (
-              <div key={p.id} className="flex items-center justify-between px-3 py-2 rounded-lg border border-gray-200 bg-white">
-                <div className="min-w-0 flex-1">
-                  <p className="text-sm font-medium text-gray-900 truncate">{p.name || p.id}</p>
-                  <p className="text-[11px] font-mono text-gray-500 mt-0.5">{p.id}</p>
+      {/* ─────────── Section 0: Preset Selector ─────────── */}
+      <SectionCard title="选择预设模板" subtitle="点击选择档位，自动填充下方 Venice / BlockRun 参数（均可单独微调）">
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+          {PRESETS.map((p) => {
+            const active = selectedPresetId === p.id;
+            return (
+              <div
+                key={p.id}
+                onClick={() => selectPreset(p)}
+                className={`rounded-xl border-2 p-5 cursor-pointer transition-all ${
+                  active
+                    ? 'border-blue-500 bg-blue-50/30 shadow-md'
+                    : 'border-gray-200 bg-white hover:border-gray-300 hover:shadow-sm'
+                }`}
+              >
+                <div className="flex items-start justify-between mb-2">
+                  <div>
+                    <h3 className="text-base font-semibold text-gray-900">{p.name}</h3>
+                    <span className="text-[11px] text-gray-400 font-mono">{p.nameEn}</span>
+                  </div>
+                  <span className={`px-2 py-0.5 rounded-full text-[11px] font-medium border ${p.riskColor}`}>
+                    风险{p.riskLevel}
+                  </span>
                 </div>
-                <div className="flex items-center gap-3 text-[11px] text-gray-600 flex-shrink-0">
-                  <span>tx 剩余 {p.remaining?.txCountRemaining ?? '—'}</span>
-                  <span>到期 {p.expiresAt ? new Date(p.expiresAt).toLocaleDateString('zh-CN') : '—'}</span>
+                <p className="text-sm text-gray-600 mb-3">{p.description}</p>
+                <div className="grid grid-cols-2 gap-2 text-xs">
+                  <div className="rounded bg-gray-50 px-2.5 py-1.5">
+                    <span className="text-gray-500">免审批</span>
+                    <span className="font-semibold text-gray-900 ml-1">${p.reviewThreshold}</span>
+                  </div>
+                  <div className="rounded bg-gray-50 px-2.5 py-1.5">
+                    <span className="text-gray-500">单笔上限</span>
+                    <span className="font-semibold text-gray-900 ml-1">${p.singleLimit}</span>
+                  </div>
+                  <div className="rounded bg-gray-50 px-2.5 py-1.5">
+                    <span className="text-gray-500">累计上限</span>
+                    <span className="font-semibold text-gray-900 ml-1">${p.cumulativeLimit}</span>
+                  </div>
+                  <div className="rounded bg-gray-50 px-2.5 py-1.5">
+                    <span className="text-gray-500">有效期</span>
+                    <span className="font-semibold text-gray-900 ml-1">{p.validDays}天</span>
+                  </div>
                 </div>
+                {active && (
+                  <div className="mt-3 flex items-center gap-1.5 text-xs text-blue-600 font-medium">
+                    <CheckCircle2 className="w-4 h-4" /> 已选择
+                  </div>
+                )}
               </div>
-            ))}
-          </div>
-        ) : (
-          <p className="text-sm text-gray-500">暂无活跃 Pact，请在下方创建</p>
-        )}
+            );
+          })}
+        </div>
       </SectionCard>
+
+      {/* ─────────── Section 0.5: Preset Params Adjustment ─────────── */}
+      {presetParams && selectedPresetId && (
+        <SectionCard title="调整参数" subtitle={`${PRESETS.find(p => p.id === selectedPresetId)?.name ?? ''} · 每项均可单独修改，修改后自动同步到 Venice / BlockRun`}>
+          <div className="space-y-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+              <div>
+                <label className="block text-[11px] text-gray-500 mb-1">免审批金额 (USDC)</label>
+                <input
+                  type="number"
+                  min={1}
+                  step={1}
+                  value={presetParams.reviewThreshold}
+                  onChange={(e) => updatePresetParam('reviewThreshold', Math.max(1, Number(e.target.value) || 1))}
+                  className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                />
+                <p className="text-[10px] text-gray-400 mt-1">低于此金额自动通过</p>
+              </div>
+              <div>
+                <label className="block text-[11px] text-gray-500 mb-1">单笔最高限额 (USDC)</label>
+                <input
+                  type="number"
+                  min={1}
+                  step={1}
+                  value={presetParams.singleLimit}
+                  onChange={(e) => updatePresetParam('singleLimit', Math.max(1, Number(e.target.value) || 1))}
+                  className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                />
+                <p className="text-[10px] text-gray-400 mt-1">单次交易不可超过</p>
+              </div>
+              <div>
+                <label className="block text-[11px] text-gray-500 mb-1">授权有效期（天）</label>
+                <input
+                  type="number"
+                  min={1}
+                  max={365}
+                  step={1}
+                  value={presetParams.validDays}
+                  onChange={(e) => updatePresetParam('validDays', Math.max(1, Number(e.target.value) || 1))}
+                  className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                />
+                <p className="text-[10px] text-gray-400 mt-1">到期后需重新授权</p>
+              </div>
+              <div>
+                <label className="block text-[11px] text-gray-500 mb-1">累计支出上限 (USDC)</label>
+                <input
+                  type="number"
+                  min={1}
+                  step={1}
+                  value={presetParams.cumulativeLimit}
+                  onChange={(e) => updatePresetParam('cumulativeLimit', Math.max(1, Number(e.target.value) || 1))}
+                  className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                />
+                <p className="text-[10px] text-gray-400 mt-1">有效期内总支出上限</p>
+              </div>
+            </div>
+          </div>
+        </SectionCard>
+      )}
 
       {/* ─────────── Section 2: Venice Pact (Mainnet) ─────────── */}
       <SectionCard
@@ -490,6 +642,65 @@ export default function UnifiedPactView() {
           {/* 预览 */}
           {brPreview && <PactPreviewCard preview={brPreview} />}
         </div>
+      </SectionCard>
+
+      {/* ─────────── Section 3: All CAW Pacts ─────────── */}
+      <SectionCard
+        title="CAW Pact 总览"
+        subtitle="钱包中所有 Pact 授权（来自 Cobo App）"
+        loading={cawPacts === null}
+        action={
+          <button
+            onClick={loadCawPacts}
+            className="inline-flex items-center gap-1 text-xs text-gray-500 hover:text-gray-700"
+          >
+            <RefreshCw className="w-3 h-3" /> 刷新
+          </button>
+        }
+      >
+        <div className="grid grid-cols-2 md:grid-cols-3 gap-3 mb-4">
+          <div className="rounded-lg bg-gray-50 px-3 py-2.5">
+            <p className="text-[11px] text-gray-500">活跃 Pact</p>
+            <p className="text-base font-semibold text-gray-900 mt-0.5">{activePacts.length} 个</p>
+          </div>
+          <div className="rounded-lg bg-gray-50 px-3 py-2.5">
+            <p className="text-[11px] text-gray-500">Base USDC Pact</p>
+            <p className="text-base font-semibold mt-0.5 flex items-center gap-1">
+              {hasBaseUsdc ? (
+                <span className="inline-flex items-center gap-1 text-emerald-700">
+                  <CheckCircle2 className="w-4 h-4" />就绪
+                </span>
+              ) : (
+                <span className="inline-flex items-center gap-1 text-red-600">
+                  <XCircle className="w-4 h-4" />缺少
+                </span>
+              )}
+            </p>
+          </div>
+          <div className="rounded-lg bg-gray-50 px-3 py-2.5 col-span-2 md:col-span-1">
+            <p className="text-[11px] text-gray-500">网络说明</p>
+            <p className="text-xs text-gray-700 mt-1">测试网 Pact ≠ 主网 Pact，不可互用</p>
+          </div>
+        </div>
+
+        {activePacts.length > 0 ? (
+          <div className="space-y-1.5">
+            {activePacts.map((p) => (
+              <div key={p.id} className="flex items-center justify-between px-3 py-2 rounded-lg border border-gray-200 bg-white">
+                <div className="min-w-0 flex-1">
+                  <p className="text-sm font-medium text-gray-900 truncate">{p.name || p.id}</p>
+                  <p className="text-[11px] font-mono text-gray-500 mt-0.5">{p.id}</p>
+                </div>
+                <div className="flex items-center gap-3 text-[11px] text-gray-600 flex-shrink-0">
+                  <span>tx 剩余 {p.remaining?.txCountRemaining ?? '—'}</span>
+                  <span>到期 {p.expiresAt ? new Date(p.expiresAt).toLocaleDateString('zh-CN') : '—'}</span>
+                </div>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <p className="text-sm text-gray-500">暂无活跃 Pact，请在下方创建</p>
+        )}
       </SectionCard>
     </div>
   );

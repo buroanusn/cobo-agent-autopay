@@ -17,6 +17,13 @@ type Snapshot = {
   };
 };
 
+type CawTx = {
+  amount?: string;
+  status?: string;
+  createdAt?: string;
+  type?: string;
+};
+
 function formatPct(part: number, total: number): string {
   if (total === 0) return '0%';
   return `${Math.round((part / total) * 100)}%`;
@@ -30,37 +37,87 @@ function formatPct(part: number, total: number): string {
  */
 export default function PaymentStatistics() {
   const [snapshot, setSnapshot] = useState<Snapshot | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [cawTxs, setCawTxs] = useState<CawTx[]>([]);
 
   useEffect(() => {
     let cancelled = false;
-    async function load() {
+    async function loadSnapshot() {
       try {
         const res = await fetch('/api/credits/balance');
         if (!res.ok) {
-          if (!cancelled) setError(`HTTP ${res.status}`);
+          // Don't set error — CAW data may still be available
           return;
         }
         const data: Snapshot = await res.json();
         if (!cancelled) setSnapshot(data);
-      } catch (e) {
-        if (!cancelled) setError(e instanceof Error ? e.message : 'fetch failed');
+      } catch {
+        // ignore — CAW data may still load
       }
     }
-    load();
+    async function loadCaw() {
+      try {
+        const ctrl = new AbortController();
+        const timer = setTimeout(() => ctrl.abort(), 25_000);
+        const res = await fetch('/api/wallet/caw/transactions?limit=20', { signal: ctrl.signal });
+        clearTimeout(timer);
+        if (res.ok) {
+          const data = await res.json();
+          if (!cancelled) setCawTxs(data?.records ?? []);
+        }
+      } catch { /* ignore */ }
+    }
+    loadSnapshot();
+    // Stagger CAW fetch to avoid 3 concurrent requests
+    const cawTimer = setTimeout(loadCaw, 5000);
     return () => {
       cancelled = true;
+      clearTimeout(cawTimer);
     };
   }, []);
 
-  const loading = snapshot === null && !error;
+  const loading = snapshot === null && cawTxs.length === 0;
   const stats = snapshot?.paymentStats;
   const orders = snapshot?.topupOrders ?? [];
 
+  // Parse CAW transaction amounts (string like "1.5" or "1.5 USDC") → minor units
+  function parseCawAmountMinor(raw?: string): number {
+    if (!raw) return 0;
+    const num = parseFloat(raw.replace(/[^0-9.]/g, ''));
+    return isNaN(num) ? 0 : Math.round(num * 1_000_000);
+  }
+
+  const cawSuccess = cawTxs.filter((t) => {
+    const s = (t.status ?? '').toLowerCase();
+    return s === 'success' || s === 'completed';
+  });
+
+  const now = Date.now();
+  const dayAgo = now - 24 * 60 * 60 * 1000;
+  const monthAgo = now - 30 * 24 * 60 * 60 * 1000;
+
+  const caw24h = cawSuccess.filter((t) => t.createdAt && Date.parse(t.createdAt) >= dayAgo);
+  const caw30d = cawSuccess.filter((t) => t.createdAt && Date.parse(t.createdAt) >= monthAgo);
+  const cawSpent24h = caw24h.reduce((s, t) => s + parseCawAmountMinor(t.amount), 0);
+  const cawSpent30d = caw30d.reduce((s, t) => s + parseCawAmountMinor(t.amount), 0);
+
+  // Merge: CAW stats + topup stats
+  const mergedSpent24h = (stats?.spent24hUsdcMinor ?? 0) + cawSpent24h;
+  const mergedSpent30d = (stats?.spent30dUsdcMinor ?? 0) + cawSpent30d;
+  const mergedTx24h = (stats?.txCount24h ?? 0) + caw24h.length;
+  const mergedTx30d = (stats?.txCount30d ?? 0) + caw30d.length;
+
   // 总额（所有非失败的）+ 占比
   const settledOrders = orders.filter((o) => o.status === 'credited' || o.status === 'pending_approval' || o.status === 'pending_policy');
-  const autoCount = orders.filter((o) => o.reason !== 'manual').length;
-  const manualCount = orders.length - autoCount;
+  const topupAutoCount = orders.filter((o) => o.reason !== 'manual').length;
+  const topupManualCount = orders.length - topupAutoCount;
+
+  // CAW: transfer = 自动, deposit = 人工, message_sign = 不算
+  const cawPayments = cawTxs.filter((t) => (t.type ?? '') !== 'message_sign');
+  const cawAutoCount = cawPayments.filter((t) => (t.type ?? '') === 'transfer').length;
+  const cawManualCount = cawPayments.filter((t) => (t.type ?? '') === 'deposit').length;
+
+  const autoCount = topupAutoCount + cawAutoCount;
+  const manualCount = topupManualCount + cawManualCount;
   const totalCount = autoCount + manualCount;
 
   return (
@@ -69,10 +126,7 @@ export default function PaymentStatistics() {
       subtitle="24 小时 / 30 天支出与笔数；自动 vs 人工触发"
       loading={loading}
     >
-      {error ? (
-        <p className="text-xs text-red-600">加载失败：{error}</p>
-      ) : (
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-x-6 gap-y-4">
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-x-6 gap-y-4">
           {/* 24h 支出 */}
           <div>
             <div className="flex items-center gap-1.5 text-xs text-gray-500 mb-1">
@@ -80,9 +134,9 @@ export default function PaymentStatistics() {
               24h 支出
             </div>
             <p className="text-lg font-semibold text-gray-900">
-              ${formatUsdc(stats?.spent24hUsdcMinor ?? 0)}
+              ${formatUsdc(mergedSpent24h)}
             </p>
-            <p className="text-[11px] text-gray-400 mt-0.5">{stats?.txCount24h ?? 0} 笔</p>
+            <p className="text-[11px] text-gray-400 mt-0.5">{mergedTx24h} 笔</p>
           </div>
 
           {/* 30d 支出 */}
@@ -92,9 +146,9 @@ export default function PaymentStatistics() {
               30d 支出
             </div>
             <p className="text-lg font-semibold text-gray-900">
-              ${formatUsdc(stats?.spent30dUsdcMinor ?? 0)}
+              ${formatUsdc(mergedSpent30d)}
             </p>
-            <p className="text-[11px] text-gray-400 mt-0.5">{stats?.txCount30d ?? 0} 笔</p>
+            <p className="text-[11px] text-gray-400 mt-0.5">{mergedTx30d} 笔</p>
           </div>
 
           {/* 自动 vs 人工 */}
@@ -120,11 +174,10 @@ export default function PaymentStatistics() {
               </div>
             </div>
             <p className="text-[11px] text-gray-400 mt-1">
-              共 {settledOrders.length} 笔有效订单
+              共 {settledOrders.length + cawSuccess.length} 笔有效订单
             </p>
           </div>
         </div>
-      )}
     </SectionCard>
   );
 }

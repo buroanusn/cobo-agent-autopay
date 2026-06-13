@@ -143,7 +143,7 @@ export default function TransactionRecords() {
     async function load() {
       // 双源
       const [cawResult, snapshotResult] = await Promise.allSettled([
-        fetch('/api/wallet/caw/transactions?limit=100'),
+        fetch('/api/wallet/caw/transactions?limit=50'),
         fetch('/api/credits/balance'),
       ]);
 
