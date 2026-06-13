@@ -6,6 +6,7 @@ import StatsSection from '@/components/dashboard/v2/StatsSection';
 import ReadinessSection from '@/components/dashboard/v2/ReadinessSection';
 import AgentSection from '@/components/dashboard/v2/AgentSection';
 import RecentPaymentsSection from '@/components/dashboard/v2/RecentPaymentsSection';
+import TreasuryCard from '@/components/dashboard/v2/TreasuryCard';
 
 /**
  * Dashboard — 按需求文档 §二 重写
@@ -35,6 +36,9 @@ export default function DashboardPage() {
 
         {/* 区块 1：4 个数据卡 */}
         <StatsSection />
+
+        {/* 区块 1.5：Treasury 互充状态 */}
+        <TreasuryCard />
 
         {/* 区块 2：真实 CAW 接入状态条 */}
         <ReadinessSection />

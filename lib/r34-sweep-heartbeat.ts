@@ -28,6 +28,7 @@
 //     handle 继续用旧文件. 同上, 重启或 stop+start 解决.
 
 import "server-only";
+import { getTreasuryStatus } from "@/lib/caw/transfer";
 
 const DEFAULT_INTERVAL_MS = 5 * 60 * 1000; // 5 min
 const MIN_INTERVAL_MS = 30 * 1000; // 30s sanity floor
@@ -493,11 +494,15 @@ export type R34SweepHeartbeatStatus = {
   blockrunAutoTopupEnabled: boolean;
   blockrunLastAutoTopupAt: string | undefined;
   blockrunLastAutoTopupResult: string | undefined;
+  treasuryStatus: string;
+  treasuryLastAmount: number | null;
+  treasuryLastTransferAt: string | null;
 };
 
 export function getR34SweepHeartbeatStatus(): R34SweepHeartbeatStatus {
   const state = getState();
   const blockrunState = getBlockRunBalanceState();
+  const treasury = getTreasuryStatus();
   return {
     running: Boolean(state.intervalHandle),
     startedAt: state.startedAt,
@@ -516,5 +521,8 @@ export function getR34SweepHeartbeatStatus(): R34SweepHeartbeatStatus {
     blockrunAutoTopupEnabled: blockrunState.autoTopupEnabled,
     blockrunLastAutoTopupAt: blockrunState.lastAutoTopupAt,
     blockrunLastAutoTopupResult: blockrunState.lastAutoTopupResult,
+    treasuryStatus: treasury.treasuryStatus,
+    treasuryLastAmount: treasury.treasuryLastAmount,
+    treasuryLastTransferAt: treasury.treasuryLastTransferAt,
   };
 }

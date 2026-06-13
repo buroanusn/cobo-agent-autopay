@@ -116,7 +116,13 @@ export async function runTreasuryTransfer(
   try {
     const binary = resolveCawBinary();
     // Strip proxy env vars to prevent Shadowrocket fake-IP hijack
-    const { http_proxy: _p1, https_proxy: _p2, HTTP_PROXY: _p3, HTTPS_PROXY: _p4, ALL_PROXY: _p5, all_proxy: _p6, ...cleanEnv } = process.env as Record<string, string>;
+    const cleanEnv = { ...process.env };
+    delete cleanEnv.http_proxy;
+    delete cleanEnv.https_proxy;
+    delete cleanEnv.HTTP_PROXY;
+    delete cleanEnv.HTTPS_PROXY;
+    delete cleanEnv.ALL_PROXY;
+    delete cleanEnv.all_proxy;
     const { stdout, stderr } = await execFileAsync(binary, args, {
       env: { ...cleanEnv, NODE_TLS_REJECT_UNAUTHORIZED: "0" },
       timeout: TRANSFER_TIMEOUT_MS,
